@@ -1,0 +1,4 @@
+qq-botpy>=1.2.1
+python-dotenv>=1.0.0
+# 图片格式归一化：QQ 只接受 png/jpg，GIF/WebP/BMP 需转成 PNG
+Pillow>=10.0.0

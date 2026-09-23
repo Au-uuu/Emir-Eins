@@ -1,0 +1,38 @@
+# 凭据文件，绝对不能提交
+.env
+
+# SSH 私钥 / 证书 —— 绝对不能提交或上传到服务器
+*.pem
+*.key
+*.ppk
+id_rsa
+id_ed25519
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 日志
+*.log
+logs/
+botpy.log
+__pycache__/
+
+# 图片库数据（含用户上传的图片）
+data/
+
+# 临时测试数据
+_test_data/
+_test_cmd/
+_test_links/
+_test_delete/
+_test_gallery/
+_test_admin/
+_test_reply/
+_test_privacy/
+_test_add/
+_test_layers/
+_test_thumb/
+_test_cards/

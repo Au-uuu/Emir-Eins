@@ -1,0 +1,42 @@
+[Unit]
+Description=QQ Official Bot (qq-botpy)
+Documentation=file:/opt/qqbot/README.md
+After=network-online.target
+Wants=network-online.target
+
+# 永不放弃重启（默认 5 次内失败就会彻底停掉，长跑服务必须关掉这个限制）
+# 注意：这两个键属于 [Unit] 段，放 [Service] 会被新版 systemd 忽略
+StartLimitIntervalSec=0
+StartLimitBurst=0
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/qqbot
+
+# 直接跑 venv 里的 python，避免依赖系统环境
+ExecStart=/opt/qqbot/.venv/bin/python /opt/qqbot/bot.py
+
+# 崩溃或被看门狗判定连接失效时自动拉起
+Restart=always
+RestartSec=10
+
+# 优雅停止：先 SIGTERM，10 秒后强杀
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+# 日志走 journald，用 journalctl -u qqbot -f 查看
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=qqbot
+
+# 让机器人退出时能正确写日志（Python 缓冲相关）
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONIOENCODING=utf-8
+
+# 轻量加固：限制权限，机器人只需要读写自己的工作目录
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
