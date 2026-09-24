@@ -261,15 +261,26 @@ _MENTION = r"(?:<@[^>\s]+>|@[^\s@]+)"
 _LEADING_MENTION_RE = re.compile(rf"^\s*(?:{_MENTION}\s*)+")
 _MENTION_TOKEN_RE = re.compile(rf"^{_MENTION}$")
 
+# QQ 会在正文里夹带各种角括号标记（表情 `<faceType=6, faceId="0", ext="...">`、
+# 图片/链接卡片等）。不剥掉就会被当成关键词入库，污染图库。
+_MARKUP_RE = re.compile(r"<[^<>\n]*>")
+
+
+def _strip_markup(raw: str) -> str:
+    """去掉 QQ 的角括号标记（表情/提及/卡片等），用空格替换避免粘连。"""
+    return _MARKUP_RE.sub(" ", raw or "")
+
 
 def normalize_incoming(raw: str) -> str:
     """
-    取出真正用于匹配指令的正文：去掉开头的 @提及（`<@openid>` 或 `@昵称`）与空白。
+    取出真正用于匹配指令的正文：去掉 QQ 标记与开头的 @提及、空白。
 
-    群全量模式下用户「@机器人 /来只」、或引用/回复别人消息时，正文开头可能
-    带着提及；不剥掉的话所有指令都认不出来。
+    群全量模式下用户「@机器人 /来只」、引用/回复别人、或正文里带表情时，
+    都可能混入 `<faceType=...>`、`<@openid>` 等标记；不剥掉的话指令认不出、
+    关键词还会被污染。
     """
     text = (raw or "").replace("\u2005", " ").replace("\u00a0", " ")
+    text = _strip_markup(text)
     return _LEADING_MENTION_RE.sub("", text).strip()
 
 
@@ -277,9 +288,11 @@ def split_keywords(raw: str) -> list[str]:
     """
     把「添加 deepseek 蓝色大肥鱼」里的关键词切开，空格/逗号/中文顿号都算分隔。
 
-    提及不是关键词，直接丢掉，否则会把「@昵称」/「<@openid>」原样存成关键词。
+    先去掉 QQ 的角括号标记与提及，避免把「@昵称」/「<@openid>」/
+    「<faceType=...>」原样存成关键词。
     """
-    parts = re.split(r"[\s,，、]+", (raw or "").strip())
+    cleaned = _strip_markup(raw or "")
+    parts = re.split(r"[\s,，、]+", cleaned.strip())
     return [
         p
         for p in parts

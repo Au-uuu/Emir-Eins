@@ -163,6 +163,14 @@ async def main() -> int:
           bot.split_keywords("猫 <@A> 狗 @某人 鸟") == ["猫", "狗", "鸟"],
           str(bot.split_keywords("猫 <@A> 狗 @某人 鸟")))
 
+    face = '<faceType=6, faceId="0", ext="eyJ0ZXh0IjoiIn0=">'
+    check("剥掉表情标记",
+          bot.normalize_incoming(f"早上好{face}") == "早上好",
+          repr(bot.normalize_incoming(f"早上好{face}")))
+    check("表情标记不进关键词",
+          bot.split_keywords(f"早上好{face} 猫") == ["早上好", "猫"],
+          str(bot.split_keywords(f"早上好{face} 猫")))
+
     u9 = write("n9.png", (9, 9, 9))
     raw = "<@SOMEONE> /添加 提及词"
     content = bot.normalize_incoming(raw)  # 走真实流程：先归一化再分派
