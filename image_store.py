@@ -1122,6 +1122,51 @@ class ImageStore:
             )
             return [(r["keyword"], r["c"]) for r in rows]
 
+    async def find_keywords(
+        self, query: str, group_openid: str | None = None, limit: int = 15
+    ) -> list[tuple[str, int]]:
+        """模糊查找相关图库：query 是关键词/别名的子串，或它们包含 query。"""
+        return await asyncio.to_thread(
+            self._find_keywords_sync, query, group_openid, limit
+        )
+
+    def _find_keywords_sync(
+        self, query: str, group_openid: str | None, limit: int
+    ) -> list[tuple[str, int]]:
+        q = clean_keyword(query)
+        if not q:
+            return []
+        g = self._group_of(group_openid)
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT keyword, COUNT(*) c FROM keywords "
+                "WHERE owner_group IN ('', ?) GROUP BY keyword",
+                (g,),
+            ).fetchall()
+            alias_map: dict[str, list[str]] = {}
+            for r in conn.execute("SELECT main, alias FROM keyword_links"):
+                alias_map.setdefault(r["main"], []).append(r["alias"])
+
+        scored: list[tuple[tuple, str, int]] = []
+        for r in rows:
+            kw = r["keyword"]
+            if kw == q:
+                continue  # 精确命中的走正常流程
+            best: tuple | None = None
+            for name in [kw, *alias_map.get(kw, [])]:
+                if q in name:
+                    rank = (0, name.index(q), -r["c"], kw)
+                elif name in q:
+                    rank = (1, 0, -r["c"], kw)
+                else:
+                    continue
+                if best is None or rank < best:
+                    best = rank
+            if best is not None:
+                scored.append((best, kw, r["c"]))
+        scored.sort(key=lambda x: x[0])
+        return [(kw, c) for _rank, kw, c in scored[:limit]]
+
     async def list_galleries(
         self, limit: int = 50, offset: int = 0, group_openid: str | None = None
     ) -> list[tuple[str, int, list[str], str]]:

@@ -158,7 +158,7 @@ HELP_TEXT = (
     "【批量】/批量添加 关键词　一次最多 5 张，把消息里的图片入库\n"
     "【删除】/删除 图库名 [私有/公开/全部]　先「引用一张图片」再回复；默认全部\n"
     "【取图】/来只 [关键词] [私有/公开/全部]　随机发一张图；默认全部\n"
-    "【查询】/图库　图库列表　/图库 关键词 [页码]　看预览图与关联词（每页 8 张）\n"
+    "【查询】/图库　图库列表　/图库 关键词 [页码]　预览图（每页 8 张，查不到会推荐相关词）\n"
     "　　　　/图库 统计　统计信息\n"
     "【关联】/关联 主词 别名…　别名等价主词，如 /关联 猫 猫咪\n"
     "　　　　/查找关联 [词]　/取消关联 别名\n"
@@ -1116,6 +1116,17 @@ async def do_gallery(
             keyword=kw, limit=1000, group_openid=group_openid
         )
         if not recs:
+            # 精确查不到 -> 模糊搜索相关关键词
+            fuzzy = await store.find_keywords(kw, group_openid, limit=15)
+            if fuzzy:
+                lines = [f"{k}（{c}）" for k, c in fuzzy]
+                await message.reply(
+                    content=(
+                        f"没有「{kw}」这个图库，你是不是想找：\n"
+                        + "\n".join(lines)
+                    )
+                )
+                return
             await message.reply(content=f"关键词「{kw}」下没有图片。{note}")
             return
 

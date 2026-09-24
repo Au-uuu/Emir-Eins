@@ -195,6 +195,19 @@ async def main() -> int:
     finally:
         bot.GALLERY_PAGE_SIZE = saved_size
 
+    print("\n[7] 模糊搜索相关关键词")
+    fz1 = await store.find_keywords("猫猫")
+    check("query 包含关键词 -> 建议 猫", ("猫", 3) in fz1, str(fz1))
+    fz2 = await store.find_keywords("ki")  # 别名 kitty 命中
+    check("别名子串也能命中", any(k == "猫" for k, _c in fz2), str(fz2))
+    fz3 = await store.find_keywords("完全不存在")
+    check("无关词无建议", fz3 == [], str(fz3))
+
+    mf = FakeMessage("/图库 猫猫")
+    await bot.do_gallery(mf, "/图库 猫猫")
+    check("精确查不到时给相关建议",
+          "你是不是想找" in mf.text and "猫" in mf.text, mf.text)
+
     print(f"\n{'=' * 50}")
     print(f"失败 {failures} 项")
     return 1 if failures else 0

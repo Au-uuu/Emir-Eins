@@ -24,6 +24,7 @@
 | 2026-09-23 | 入库缩略图（≤100KB）+ `/图库 关键词` 预览图（每页 8）；列表每页 30 | [thumbnails-and-gallery-preview](changes/2026-09-23-thumbnails-and-gallery-preview.md) |
 | 2026-09-23 | 游戏名片：`/添加名片`、`/游戏名片`（竖排拼图）、`/删除名片` | [game-cards](changes/2026-09-23-game-cards.md) |
 | 2026-09-23 | 名片修复：图片识别放宽（content_type 缺失）、禁纯数字备注、拼图 1920 | [card-image-parse-and-width](changes/2026-09-23-card-image-parse-and-width.md) |
+| 2026-09-23 | `/图库 关键词` 精确查不到时模糊推荐相关关键词 | [gallery-fuzzy-search](changes/2026-09-23-gallery-fuzzy-search.md) |
 
 ## 约定
 
