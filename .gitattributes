@@ -1,0 +1,2 @@
+# 部署脚本必须是 LF：Windows 上编辑后直接 scp 到 Linux 也能跑
+*.sh text eol=lf

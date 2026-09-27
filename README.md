@@ -224,6 +224,50 @@ botpy 的 WebSocket **可能静默失效**：进程活着、心跳循环还在�
 - **消息去重**：相同 `msg_id` 可能重复推送，代码已做 5 分钟去重
 - **全量模式慎用**：50 人群里对所有消息都回复会撞频控，务必靠关键词 + 限流过滤
 
+## 图库备份到坚果云（WebDAV）
+
+图库是**独一份**数据（服务器上 100+ 张图，本地旧副本早就落后了），所以做一层异地备份。
+
+- **脚本**：`deploy/backup-nutstore.sh`
+- **定时**：root 的 crontab，每天 **03:30**
+- **目标**：坚果云 `我的坚果云/qqbot-backup/`（含 `images/`、`thumbs/`、`images.db`）
+- **日志**：`/var/log/qqbot-backup.log`
+- **凭据**：服务器 `/root/.config/rclone/rclone.conf`（权限 600）
+
+设计要点：
+
+- **增量**：图片按 SHA-256 命名、内容永不改变，所以每天只上传新增的那几张
+- **远端只增不减**：用 `rclone copy` 而不是 `sync` —— 服务器上误删的图，云上仍然保留
+- **数据库一致性**：用 SQLite 在线备份 API 先取快照再上传，避免抓到写一半的库
+- **防重入**：`flock`，上一次没跑完就跳过本次
+
+手动跑一次（`--dry` 为演练，不实际传输）：
+
+```bash
+sudo /opt/qqbot/deploy/backup-nutstore.sh
+```
+
+### 恢复
+
+```bash
+sudo rclone copy nutstore:qqbot-backup/images /opt/qqbot/data/images
+sudo rclone copy nutstore:qqbot-backup/thumbs /opt/qqbot/data/thumbs
+sudo rclone copyto nutstore:qqbot-backup/images.db /opt/qqbot/data/images.db
+sudo systemctl restart qqbot
+```
+
+### 两个必须知道的限制
+
+⚠️ 坚果云免费版：**每 30 分钟 600 次请求**、每月**上传 1GB / 下载 3GB**。
+一次全量约 400 次请求，日常增量约 140 次，都在额度内。
+
+> **不要用 `rclone lsl -R` / `rclone size` 这类递归列目录去"验证"备份** ——
+> 一次就要 130+ 请求，跟备份叠在一起会触发 `503 BlockedTemporarily`（已验证过这个坑）。
+> 验证请只针对单个文件：下载回来比对 SHA-256 即可。
+
+撤销凭据：坚果云 → 账户信息 → 安全选项 → 第三方应用管理 → 删除 `qqbot-backup`。
+本机另存了一份凭据，见 `C:\DSH\.keys\nutstore-webdav.txt`。
+
 ## 上线检查清单
 
 - [ ] 服务范围改为「公开使用」（先在管理端提交隐私协议并通过审核）
