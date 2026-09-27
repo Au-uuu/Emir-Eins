@@ -16,10 +16,10 @@
 
 ## 1. 从本地打包
 
-在 **Windows 本地** `D:\DSH` 目录下执行：
+在 **Windows 本地** `C:\DSH` 目录下执行：
 
 ```powershell
-cd D:\DSH
+cd C:\DSH
 tar -czf qqbot-deploy.tar.gz `
   --exclude="qqbot/.venv" `
   --exclude="qqbot/__pycache__" `
@@ -28,7 +28,7 @@ tar -czf qqbot-deploy.tar.gz `
   qqbot
 ```
 
-产物：`D:\DSH\qqbot-deploy.tar.gz`（约几百 KB，含图片库）
+产物：`C:\DSH\qqbot-deploy.tar.gz`（约几百 KB，含图片库）
 
 > 用系统自带的 `tar` 即可（Win10 1803+ 都带）。如果报错，也可以直接用 WinSCP 拖整个 `qqbot` 目录。
 
@@ -40,7 +40,7 @@ tar -czf qqbot-deploy.tar.gz `
 
 ```powershell
 # 把 <SERVER_IP> 换成你的公网 IP
-scp D:\DSH\qqbot-deploy.tar.gz root@<SERVER_IP>:/root/
+scp C:\DSH\qqbot-deploy.tar.gz root@<SERVER_IP>:/root/
 ```
 
 回车后输入服务器 root 密码。

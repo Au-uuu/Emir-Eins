@@ -6,7 +6,8 @@ import subprocess
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-sys.path.insert(0, r"D:\DSH\qqbot")
+ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, ROOT)
 
 import watchdog  # noqa: E402
 
@@ -42,13 +43,13 @@ async def main() -> int:
     print("\n[3] 超时退出行为（子进程实测）")
     code = r'''
 import asyncio, os, sys
-sys.path.insert(0, r"D:\DSH\qqbot")
+sys.path.insert(0, {root!r})
 import watchdog
 async def main():
     # 0.5 秒空闲即判定失效
     await watchdog.watch(idle_timeout=0.5, check_interval=0.2)
 asyncio.run(main())
-'''
+'''.format(root=ROOT)
     env = dict(os.environ, PYTHONIOENCODING="utf-8")
     proc = subprocess.run(
         [sys.executable, "-c", code],
@@ -65,7 +66,7 @@ asyncio.run(main())
     print("\n[4] 未超时不应退出")
     code2 = r'''
 import asyncio, sys
-sys.path.insert(0, r"D:\DSH\qqbot")
+sys.path.insert(0, {root!r})
 import watchdog
 async def main():
     # 空闲阈值 10 秒，但只观察 1 秒，且中途有活动
@@ -76,7 +77,7 @@ async def main():
     task.cancel()
     print("STILL_ALIVE")
 asyncio.run(main())
-'''
+'''.format(root=ROOT)
     proc2 = subprocess.run(
         [sys.executable, "-c", code2],
         capture_output=True,

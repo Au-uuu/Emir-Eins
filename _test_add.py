@@ -15,12 +15,12 @@ import types
 import zlib
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-sys.path.insert(0, r"D:\DSH\qqbot")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import bot  # noqa: E402
 from image_store import ImageStore  # noqa: E402
 
-TEST_DIR = r"D:\DSH\qqbot\_test_add"
+TEST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_test_add")
 failures = 0
 
 

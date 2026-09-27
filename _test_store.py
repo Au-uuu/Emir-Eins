@@ -8,11 +8,11 @@ import sys
 import zlib
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-sys.path.insert(0, r"D:\DSH\qqbot")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from image_store import ImageStore, normalize_keywords  # noqa: E402
 
-TEST_DIR = r"D:\DSH\qqbot\_test_data"
+TEST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_test_data")
 
 
 def make_png(width: int, height: int, color: tuple[int, int, int]) -> bytes:

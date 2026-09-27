@@ -8,11 +8,12 @@
 """
 
 import asyncio
+import os
 import sys
 import types
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-sys.path.insert(0, r"D:\DSH\qqbot")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import bot  # noqa: E402
 from image_store import ImageStore  # noqa: E402
@@ -125,7 +126,7 @@ async def main() -> int:
     print("\n[8] 代码里不再出现「收到：」回显")
     import re
 
-    src = open(os.path.join(r"D:\DSH\qqbot", "bot.py"), encoding="utf-8").read()
+    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot.py"), encoding="utf-8").read()
     check("无『收到：』字面量", "收到：" not in src)
     check("无『你好，我是机器人』", "你好，我是机器人" not in src)
 
