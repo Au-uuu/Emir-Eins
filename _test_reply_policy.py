@@ -123,7 +123,49 @@ async def main() -> int:
     await c2c(m)
     check("单聊 ping 正常", m.text == "pong 🏓", m.text)
 
-    print("\n[8] 代码里不再出现「收到：」回显")
+    print("\n[8] 单聊只发一张图片 → 静默，不回帮助")
+    m = FakeMessage("", scope="c2c")
+    m.attachments = [
+        types.SimpleNamespace(
+            content_type="image/png",
+            filename="a.png",
+            url="http://example.com/a.png",
+        )
+    ]
+    await c2c(m)
+    check("单聊发图不回复", m.replies == [], str(m.replies))
+
+    print("\n[9] 单聊只引用一张图片（图在 msg_elements 里）→ 同样静默")
+    import raw_events
+
+    m = FakeMessage("", scope="c2c")
+    raw_events._remember(
+        m.id,
+        {
+            "d": {
+                "msg_elements": [
+                    {
+                        "attachments": [
+                            {
+                                "content_type": "image/jpeg",
+                                "filename": "b.jpg",
+                                "url": "http://example.com/b.jpg",
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+    )
+    await c2c(m)
+    check("引用图片也不回复", m.replies == [], str(m.replies))
+
+    print("\n[10] 单聊只发了个表情（空内容、无图）→ 仍给帮助")
+    m = FakeMessage("", scope="c2c")
+    await c2c(m)
+    check("空内容仍给帮助", "我是群助手" in m.text, m.text[:40])
+
+    print("\n[11] 代码里不再出现「收到：」回显")
     import re
 
     src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot.py"), encoding="utf-8").read()

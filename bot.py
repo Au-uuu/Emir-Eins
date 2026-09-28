@@ -1790,8 +1790,12 @@ class MyClient(botpy.Client):
         )
 
         try:
-            # 空内容（例如只发了一张图/一个表情）→ 视为 /help（管理员给完整表）
+            # 空内容：只发了一张图片（含引用的图片）→ 静默忽略，发图不该换来一屏帮助
+            # 其余空内容（例如只发了个表情）→ 视为 /help（管理员给完整表）
             if not content:
+                if collect_image_attachments(message):
+                    log.info("[单聊] 只发了图片，已静默忽略")
+                    return
                 await send_help(
                     message, full=await store.is_admin(author_openid(message))
                 )
