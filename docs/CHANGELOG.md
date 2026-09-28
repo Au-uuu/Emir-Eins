@@ -26,6 +26,8 @@
 | 2026-09-23 | 名片修复：图片识别放宽（content_type 缺失）、禁纯数字备注、拼图 1920 | [card-image-parse-and-width](changes/2026-09-23-card-image-parse-and-width.md) |
 | 2026-09-23 | `/图库 关键词` 精确查不到时模糊推荐相关关键词 | [gallery-fuzzy-search](changes/2026-09-23-gallery-fuzzy-search.md) |
 | 2026-09-27 | 图库异地备份到坚果云（WebDAV）：增量上传、远端只增不减、数据库一致性快照 | [nutstore-backup](changes/2026-09-27-nutstore-backup.md) |
+| 2026-09-28 | 单聊只发图片时不再回复 `/help`（图片消息正文为空被误判为「空内容」） | [c2c-image-silent](changes/2026-09-28-c2c-image-silent.md) |
+| 2026-09-28 | 修正 Noto CJK 取到日文字形；新增文本转图片模块（尚未接入 `bot.py`） | [font-face-and-text-image](changes/2026-09-28-font-face-and-text-image.md) |
 
 ## 约定
 

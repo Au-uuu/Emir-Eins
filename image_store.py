@@ -424,6 +424,17 @@ _FONT_CANDIDATES = [
 ]
 
 
+def _ttc_face_index(path: str) -> int:
+    """返回 .ttc 字体包里应使用的字号序号。
+
+    Noto Sans CJK 的 ttc 打包了 JP/KR/SC/TC/HK 五套字形，**index=0 是日文**，
+    简体中文在 index=2。用日文字形渲染中文，会出现「直」「骨」等字的日式写法。
+    """
+    if os.path.basename(path) in ("NotoSansCJK-Regular.ttc", "NotoSansCJK-Bold.ttc"):
+        return 2  # Noto Sans CJK SC
+    return 0
+
+
 def _load_cjk_font(size: int):
     try:
         from PIL import ImageFont
@@ -431,9 +442,15 @@ def _load_cjk_font(size: int):
         return None
     for path in _FONT_CANDIDATES:
         if path and os.path.isfile(path):
+            index = _ttc_face_index(path)
             try:
-                return ImageFont.truetype(path, size)
+                return ImageFont.truetype(path, size, index=index)
             except Exception:  # noqa: BLE001
+                if index:  # 序号不被支持时退回默认
+                    try:
+                        return ImageFont.truetype(path, size)
+                    except Exception:  # noqa: BLE001
+                        pass
                 continue
     try:
         return ImageFont.load_default()
