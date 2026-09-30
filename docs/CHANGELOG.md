@@ -28,6 +28,7 @@
 | 2026-09-27 | 图库异地备份到坚果云（WebDAV）：增量上传、远端只增不减、数据库一致性快照 | [nutstore-backup](changes/2026-09-27-nutstore-backup.md) |
 | 2026-09-28 | 单聊只发图片时不再回复 `/help`（图片消息正文为空被误判为「空内容」） | [c2c-image-silent](changes/2026-09-28-c2c-image-silent.md) |
 | 2026-09-28 | 修正 Noto CJK 取到日文字形；新增文本转图片模块（尚未接入 `bot.py`） | [font-face-and-text-image](changes/2026-09-28-font-face-and-text-image.md) |
+| 2026-09-30 | 人格聊天：单聊/群@ 非指令文本接入 `qwen-flash-character`，按会话隔离记忆 + 敏感词过滤 | [persona-chat](changes/2026-09-30-persona-chat.md) |
 
 ## 约定
 

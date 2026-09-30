@@ -23,7 +23,10 @@ import botpy
 from botpy.message import C2CMessage, GroupMessage
 from dotenv import load_dotenv
 
+import persona
+import sensitive
 import watchdog
+from chat_store import ChatStore
 from image_store import (
     ImageStore,
     first_frame_png,
@@ -49,6 +52,14 @@ GROUP_REPLY_COOLDOWN = float(os.getenv("QQ_BOT_COOLDOWN", "10"))
 
 # 取图指令的每群限流，防止有人连点把接口打爆
 IMAGE_COOLDOWN = float(os.getenv("QQ_BOT_IMAGE_COOLDOWN", "3"))
+
+# 人格聊天：同一会话的最小回复间隔（秒），防止连点烧 token；0 = 不限流
+CHAT_COOLDOWN = float(os.getenv("QQ_BOT_CHAT_COOLDOWN", "5") or 0)
+
+# 全量模式下是否也触发人格聊天。
+# 「@机器人」和「回复别人」在正文开头都会留下 <@openid>，光看文本无法可靠区分，
+# 所以默认关闭；打开后代价是「回复别人」的消息也会误触发。
+CHAT_IN_ALL = os.getenv("QQ_BOT_CHAT_IN_ALL", "").lower() in ("1", "true", "yes")
 
 # 看门狗：超过这么久没收到任何网关消息，就认为长连接已死并重启进程（秒）
 WATCHDOG_IDLE_TIMEOUT = float(os.getenv("QQ_BOT_IDLE_TIMEOUT", "900"))
@@ -144,8 +155,22 @@ class Cooldown:
 dedup = DedupCache()
 cooldown = Cooldown(GROUP_REPLY_COOLDOWN)
 
+# 人格聊天的每会话限流（与图片指令的限流分开，互不影响）
+chat_cooldown = Cooldown(CHAT_COOLDOWN)
+
 # 图片库（SQLite + 本地文件）
 store = ImageStore()
+
+# 人格聊天的短期记忆（按会话隔离，默认每会话 100 条）
+chat = ChatStore()
+
+# 启动时把人格聊天的状态写进日志，运维一眼就能看出有没有生效
+if persona.available():
+    log.info(
+        "人格聊天已启用：模型=%s，记忆 %d 条/会话", persona.model(), chat.max_messages
+    )
+else:
+    log.info("人格聊天未启用（缺 QQ_BOT_QWEN_KEY 或角色卡）")
 
 
 # ---------------------------------------------------------------------------
@@ -1558,6 +1583,56 @@ async def send_help(message, full: bool = False) -> None:
             log.exception("发送帮助失败: %s", exc2)
 
 
+def has_leading_mention(raw: str) -> bool:
+    """正文开头是否带 @ 提及（`<@openid>` 与 `@昵称` 两种写法都认）。"""
+    text = (raw or "").replace("\u2005", " ").replace("\u00a0", " ")
+    return bool(_LEADING_MENTION_RE.match(text))
+
+
+async def persona_reply(message, scope: str, content: str) -> None:
+    """
+    人格聊天：把非指令文本交给角色模型，并维护该会话的上下文。
+
+    完全被动——只在收到消息时才会走到这里，永远不会主动推送。
+
+    三道静默：
+      1. 用户这句话命中敏感词 → 不回，也不记进上下文
+      2. 模型调用失败 / 超时 → 不回（避免报错刷屏）
+      3. 模型回复命中敏感词 → 丢弃这条回复（宁可装死，也不能把暴论发出去）
+    """
+    if not persona.available():
+        return
+
+    if sensitive.filter.hit(content):
+        log.info("[人格] 命中敏感词，已静默: scope=%s", scope)
+        return
+
+    if not chat_cooldown.allow(scope):
+        log.info("[人格] 触发限流，已跳过: scope=%s", scope)
+        return
+
+    history = await chat.history(scope)
+    reply = await persona.generate(history, content)
+    if not reply:
+        log.info("[人格] 本轮无回复: scope=%s", scope)
+        return
+
+    hit = sensitive.filter.hit(reply)
+    if hit:
+        log.warning("[人格] 模型回复命中敏感词「%s」，已丢弃", hit)
+        await chat.append(scope, content, None)
+        return
+
+    try:
+        await message.reply(content=reply)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("发送人格回复失败: %s", exc)
+        return
+
+    await chat.append(scope, content, reply)
+    log.info("[人格] 已回复 scope=%s: %s", scope, reply[:40])
+
+
 async def handle_command(message, api, scope: str, scene_id: str, content: str) -> bool:
     """
     处理指令。返回 True 表示已回复，False 表示不是指令。
@@ -1722,7 +1797,8 @@ class MyClient(botpy.Client):
                 message, self.api, "group", message.group_openid, content
             ):
                 return
-            log.info("[群@] 非指令消息，已忽略: %s", content[:40])
+            # 非指令文本 → 人格聊天（群里只在被 @ 时触发）
+            await persona_reply(message, f"group:{message.group_openid}", content)
         except Exception as exc:  # noqa: BLE001
             log.exception("回复群@消息失败: %s", exc)
 
@@ -1760,6 +1836,14 @@ class MyClient(botpy.Client):
                 return
         except Exception as exc:  # noqa: BLE001
             log.exception("处理群全量指令失败: %s", exc)
+            return
+
+        # 全量模式下的可选人格触发（默认关闭）。
+        # 「@机器人」与「回复别人」在正文开头都会留下 <@openid>，仅凭文本无法可靠
+        # 区分，所以需要时用 QQ_BOT_CHAT_IN_ALL=1 显式打开，代价是回复别人的
+        # 消息也会误触发。
+        if CHAT_IN_ALL and has_leading_mention(message.content):
+            await persona_reply(message, f"group:{message.group_openid}", content)
             return
 
         # 非指令：仅在配置了关键词且命中时才响应，避免在群里刷屏
@@ -1802,8 +1886,8 @@ class MyClient(botpy.Client):
                 return
             if await handle_command(message, self.api, "c2c", openid, content):
                 return
-            # 认不出的内容直接无视
-            log.info("[单聊] 非指令消息，已忽略: %s", content[:40])
+            # 非指令文本 → 人格聊天（单聊没有 @ 的概念，直接触发）
+            await persona_reply(message, f"c2c:{openid or 'unknown'}", content)
         except Exception as exc:  # noqa: BLE001
             log.exception("回复单聊消息失败: %s", exc)
 
