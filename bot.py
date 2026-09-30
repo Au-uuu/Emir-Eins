@@ -56,10 +56,9 @@ IMAGE_COOLDOWN = float(os.getenv("QQ_BOT_IMAGE_COOLDOWN", "3"))
 # 人格聊天：同一会话的最小回复间隔（秒），防止连点烧 token；0 = 不限流
 CHAT_COOLDOWN = float(os.getenv("QQ_BOT_CHAT_COOLDOWN", "5") or 0)
 
-# 全量模式下是否也触发人格聊天。
-# 「@机器人」和「回复别人」在正文开头都会留下 <@openid>，光看文本无法可靠区分，
-# 所以默认关闭；打开后代价是「回复别人」的消息也会误触发。
-CHAT_IN_ALL = os.getenv("QQ_BOT_CHAT_IN_ALL", "").lower() in ("1", "true", "yes")
+# 只发了图片时写进上下文的占位文本。
+# 模型看不到图，写明白点，免得它顺着上下文瞎编图片内容。
+IMAGE_ONLY_PLACEHOLDER = "（发了一张图片）"
 
 # 看门狗：超过这么久没收到任何网关消息，就认为长连接已死并重启进程（秒）
 WATCHDOG_IDLE_TIMEOUT = float(os.getenv("QQ_BOT_IDLE_TIMEOUT", "900"))
@@ -1583,10 +1582,28 @@ async def send_help(message, full: bool = False) -> None:
             log.exception("发送帮助失败: %s", exc2)
 
 
-def has_leading_mention(raw: str) -> bool:
-    """正文开头是否带 @ 提及（`<@openid>` 与 `@昵称` 两种写法都认）。"""
-    text = (raw or "").replace("\u2005", " ").replace("\u00a0", " ")
-    return bool(_LEADING_MENTION_RE.match(text))
+def mentioned_bot(message) -> bool:
+    """
+    这条消息是否 **@ 了机器人**。
+
+    群主开启「接收所有消息」（全量模式）后，@机器人 与 回复别人 都会走
+    `GROUP_MESSAGE_CREATE`，且正文开头都会带 `<@openid>` —— 光看正文分不出来。
+
+    可靠依据在原始 payload 的 `mentions` 数组里：被 @ 的实体中，机器人自己那条
+    带 `is_you: true`（实测字段：
+
+        mentions[0].is_you        = True
+        mentions[0].bot          = True
+        mentions[0].username     = 机器人昵称
+        mentions[0].member_openid= 机器人 openid
+
+    这个判定只对群消息有意义；单聊没有 @ 的概念。
+    """
+    raw = get_raw(message)
+    for item in raw.get("mentions") or []:
+        if isinstance(item, dict) and item.get("is_you"):
+            return True
+    return False
 
 
 async def persona_reply(message, scope: str, content: str) -> None:
@@ -1812,10 +1829,20 @@ class MyClient(botpy.Client):
             return
 
         content = normalize_incoming(message.content)
+        mentions_me = mentioned_bot(message)
+
         if not content:
+            # 只 @ 了机器人、没写正文 → 与「群@」事件保持一致，给帮助
+            if mentions_me:
+                await send_help(message)
             return
 
-        log.info("[群全量] group=%s %s", message.group_openid, content[:60])
+        log.info(
+            "[群全量] group=%s %s%s",
+            message.group_openid,
+            content[:60],
+            " [+@本机]" if mentions_me else "",
+        )
 
         # 图片指令加一道群级限流，防止群里被连续刷（/来只 另有一层 3 秒限流）
         if (
@@ -1838,11 +1865,10 @@ class MyClient(botpy.Client):
             log.exception("处理群全量指令失败: %s", exc)
             return
 
-        # 全量模式下的可选人格触发（默认关闭）。
-        # 「@机器人」与「回复别人」在正文开头都会留下 <@openid>，仅凭文本无法可靠
-        # 区分，所以需要时用 QQ_BOT_CHAT_IN_ALL=1 显式打开，代价是回复别人的
-        # 消息也会误触发。
-        if CHAT_IN_ALL and has_leading_mention(message.content):
+        # 被 @ 且不是指令 → 人格聊天。
+        # 判定用 payload 的 mentions[].is_you，而不是正文里的 <@openid>
+        # —— 回复别人时正文开头同样会带 <@openid>，靠正文会误触发。
+        if mentions_me:
             await persona_reply(message, f"group:{message.group_openid}", content)
             return
 
@@ -1874,11 +1900,15 @@ class MyClient(botpy.Client):
         )
 
         try:
-            # 空内容：只发了一张图片（含引用的图片）→ 静默忽略，发图不该换来一屏帮助
+            # 空内容：只发了一张图片（含引用的图片）→ **不回复**，但记进上下文，
+            # 让紧接着的下一句（「这张图好可爱」）能接得上
             # 其余空内容（例如只发了个表情）→ 视为 /help（管理员给完整表）
             if not content:
                 if collect_image_attachments(message):
-                    log.info("[单聊] 只发了图片，已静默忽略")
+                    await chat.append(
+                        f"c2c:{openid or 'unknown'}", IMAGE_ONLY_PLACEHOLDER, None
+                    )
+                    log.info("[单聊] 只发了图片：已记入上下文，不回复")
                     return
                 await send_help(
                     message, full=await store.is_admin(author_openid(message))

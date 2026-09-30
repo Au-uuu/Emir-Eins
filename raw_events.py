@@ -30,7 +30,13 @@ _TTL = 300.0  # 与被动回复窗口对齐
 _MAXSIZE = 500
 
 # 可选：把原始事件落盘，便于排查（环境变量 QQ_BOT_DUMP_EVENTS=1 开启）
-_DUMP = os.getenv("QQ_BOT_DUMP_EVENTS", "").lower() in ("1", "true", "yes")
+#
+# ⚠️ 必须**惰性**判断：bot.py 的 load_dotenv() 在 import 语句之后才执行，
+#    在 import 期间读环境变量会读到空值，导致这个开关永远不生效（踩过）。
+def dump_enabled() -> bool:
+    return os.getenv("QQ_BOT_DUMP_EVENTS", "").lower() in ("1", "true", "yes")
+
+
 _DUMP_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "logs", "raw_events.jsonl"
 )
@@ -49,7 +55,7 @@ def _remember(msg_id: str, payload: dict) -> None:
         if len(_STORE) > _MAXSIZE:
             _STORE.popitem(last=False)
 
-    if _DUMP:
+    if dump_enabled():
         try:
             os.makedirs(os.path.dirname(_DUMP_PATH), exist_ok=True)
             with open(_DUMP_PATH, "a", encoding="utf-8") as fh:

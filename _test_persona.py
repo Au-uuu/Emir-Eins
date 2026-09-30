@@ -6,6 +6,7 @@ import asyncio
 import os
 import sys
 import tempfile
+import types
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -86,6 +87,38 @@ async def main() -> int:
 
     check("默认上限 100 条", ChatStore(db_path=os.path.join(tmp, "d.db")).max_messages == 100)
 
+    # ---------------- 2b. 记忆过期（20 分钟） ----------------
+    print("\n[2b] 记忆过期：超过存活时间的旧消息不再喂给模型")
+    import sqlite3
+    import time as _time
+
+    ttl_path = os.path.join(tmp, "ttl.db")
+    ttl_store = ChatStore(db_path=ttl_path, max_messages=100, memory_minutes=20)
+    await ttl_store.append("c2c:u1", "刚说的话", "【回答】好")
+
+    conn = sqlite3.connect(ttl_path)
+    conn.execute(
+        "INSERT INTO messages(scope, role, content, ts) VALUES (?, ?, ?, ?)",
+        ("c2c:u1", "user", "21分钟前的旧话", _time.time() - 21 * 60),
+    )
+    conn.commit()
+    conn.close()
+
+    texts = [x["content"] for x in await ttl_store.history("c2c:u1")]
+    check(
+        "过期消息被排除在上下文外",
+        "21分钟前的旧话" not in texts and "刚说的话" in texts,
+        str(texts),
+    )
+
+    await ttl_store.append("c2c:u1", "触发一次写入", "【回答】好")
+    conn = sqlite3.connect(ttl_path)
+    n = conn.execute(
+        "SELECT COUNT(*) FROM messages WHERE scope='c2c:u1' AND content='21分钟前的旧话'"
+    ).fetchone()[0]
+    conn.close()
+    check("写入时物理清理过期行", n == 0, f"残留 {n} 行")
+
     # ---------------- 3. 回复流程 ----------------
     print("\n[3] 回复流程的静默策略")
     bot.chat = ChatStore(db_path=os.path.join(tmp, "chat2.db"), max_messages=100)
@@ -145,6 +178,63 @@ async def main() -> int:
     m = FakeMessage("没配 Key")
     await bot.persona_reply(m, "group:G5", "没配 Key")
     check("未配置 API Key → 完全不回复", m.replies == [], str(m.replies))
+
+    # ---------------- 4. 全量模式：靠 mentions 判定 @ ----------------
+    print("\n[4] 全量模式：靠 payload 的 mentions[].is_you 判定「被 @」")
+    import raw_events
+
+    class GroupFakeMessage:
+        _seq = 0
+
+        def __init__(self, content: str, mentions=None):
+            GroupFakeMessage._seq += 1
+            self.content = content
+            self.attachments: list = []
+            self.id = f"g{GroupFakeMessage._seq}"
+            self.group_openid = "G_ALL"
+            self.author = types.SimpleNamespace(member_openid="user_x")
+            self.replies: list[dict] = []
+            if mentions is not None:
+                raw_events._remember(self.id, {"d": {"mentions": mentions}})
+
+        async def reply(self, **kwargs):
+            self.replies.append(kwargs)
+            return {"id": "sent"}
+
+        @property
+        def text(self) -> str:
+            return "\n".join(r.get("content") or "" for r in self.replies)
+
+    class GroupFakeApi:
+        async def post_group_message(self, **kwargs):
+            return {"id": "m"}
+
+    group_client = types.SimpleNamespace(api=GroupFakeApi())
+
+    async def group_all(m):
+        await bot.MyClient.on_group_message_create(group_client, m)
+
+    persona.available = lambda: True
+    persona.generate = ok_generate
+    bot.chat_cooldown.seconds = 0
+
+    m = GroupFakeMessage(
+        "<@BOTOPENID> 111",
+        mentions=[{"is_you": True, "bot": True, "username": "依蜜尔爱因-测试中"}],
+    )
+    await group_all(m)
+    check("明确 @ 机器人 → 人格回复", len(m.replies) == 1, str(m.replies))
+
+    m2 = GroupFakeMessage(
+        "<@SOMEONE> 你好啊",
+        mentions=[{"is_you": False, "bot": False, "username": "别人"}],
+    )
+    await group_all(m2)
+    check("回复别人（mentions 无 is_you）→ 不回复", m2.replies == [], str(m2.replies))
+
+    m3 = GroupFakeMessage("222")
+    await group_all(m3)
+    check("普通群消息（无 mentions）→ 不回复", m3.replies == [], str(m3.replies))
 
     print(f"\n{'=' * 50}")
     print(f"失败 {failures} 项")

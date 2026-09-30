@@ -74,6 +74,12 @@ async def main() -> int:
         db_path=os.path.join(tmp, "images.db"),
         images_dir=os.path.join(tmp, "images"),
     )
+    # 单聊发图会写进人格聊天的上下文，这里换成临时库，别污染 data/chat.db
+    from chat_store import ChatStore
+
+    bot.chat = ChatStore(db_path=os.path.join(tmp, "chat.db"))
+    # 本套件只测「回复策略」，把人格聊天关掉，避免依赖模型可用性 / 产生真实调用
+    bot.persona.available = lambda: False
 
     client = FakeClient()
 
@@ -134,6 +140,8 @@ async def main() -> int:
     ]
     await c2c(m)
     check("单聊发图不回复", m.replies == [], str(m.replies))
+    ctx = await bot.chat.history("c2c:user_x")
+    check("但会记入上下文", len(ctx) == 1 and "图片" in ctx[0]["content"], str(ctx))
 
     print("\n[9] 单聊只引用一张图片（图在 msg_elements 里）→ 同样静默")
     import raw_events
@@ -159,6 +167,8 @@ async def main() -> int:
     )
     await c2c(m)
     check("引用图片也不回复", m.replies == [], str(m.replies))
+    ctx = await bot.chat.history("c2c:user_x")
+    check("引用图片也记入上下文", len(ctx) == 2, str(ctx))
 
     print("\n[10] 单聊只发了个表情（空内容、无图）→ 仍给帮助")
     m = FakeMessage("", scope="c2c")
