@@ -126,6 +126,8 @@ def render_text_image(
     panel_margin: int = 26,
     image_top: int = 0,
     panel_blur: int = 0,
+    columns: int = 1,
+    column_gap: int = 56,
 ) -> bytes:
     """把 ``text`` 渲染成 PNG bytes。
 
@@ -140,6 +142,8 @@ def render_text_image(
     :param panel_blur: 把面板**后面的背景**模糊多少像素（0=不模糊）。
         这是做出「磨砂玻璃」的关键：模糊后背景依然可见，但不再和文字抢注意力，
         于是面板可以做到很透也依然清晰。
+    :param columns: 分几栏排版。**2 栏能在宽度不变（字一样小）的前提下把高度砍掉近一半**，
+        既省流量又少滚动；分栏点会挑最靠近中点的空行，避免把一组指令劈成两半。
     """
     if width <= 0 or font_size <= 0:
         raise ValueError("width / font_size 必须为正数")
@@ -148,17 +152,40 @@ def render_text_image(
     w, pad, fs = width * ss, padding * ss, font_size * ss
     font = _load_cjk_font(fs)
 
+    cols = 2 if int(columns) >= 2 else 1
+    gap = column_gap * ss if cols == 2 else 0
+    col_w = (w - pad * 2 - gap * (cols - 1)) // cols
+
     probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
-    max_text_w = w - pad * 2
-    lines = _wrap(probe, text, font, max_text_w)
+    lines = _wrap(probe, text, font, col_w)
 
     ascent, descent = font.getmetrics()
     line_h = (ascent + descent) * line_spacing
+
+    if cols == 2:
+        # 分栏点挑「最靠近中点的空行」——帮助文本用空行分隔指令组，
+        # 在这里切就不会把一组指令劈成两栏。
+        mid = len(lines) // 2
+        split = None
+        for i, ln in enumerate(lines):
+            if not ln and (split is None or abs(i - mid) < abs(split - mid)):
+                split = i
+        if not split:
+            split = mid
+        col_lines = [lines[:split], lines[split:]]
+        while col_lines[1] and not col_lines[1][0]:
+            col_lines[1].pop(0)
+    else:
+        col_lines = [lines]
+
+    def _block_height(rows: list) -> float:
+        h = 0.0
+        for ln in rows:
+            h += line_h * (1 + paragraph_gap) if not ln else line_h
+        return h
+
     top = max(0, int(image_top)) * ss
-    total_h = top + pad * 2
-    for ln in lines:
-        total_h += line_h * (1 + paragraph_gap) if not ln else line_h
-    total_h = int(round(total_h))
+    total_h = int(round(top + pad * 2 + max(_block_height(r) for r in col_lines)))
 
     if total_h > max_height * ss:
         raise ValueError(
@@ -191,13 +218,15 @@ def render_text_image(
         img = Image.new("RGB", (w, total_h), bg)
     draw = ImageDraw.Draw(img)
 
-    y = float(top + pad)
-    for ln in lines:
-        if ln:
-            draw.text((pad, y), ln, font=font, fill=fg)
-            y += line_h
-        else:
-            y += line_h * paragraph_gap
+    for idx, rows in enumerate(col_lines):
+        x = pad + idx * (col_w + gap)
+        y = float(top + pad)
+        for ln in rows:
+            if ln:
+                draw.text((x, y), ln, font=font, fill=fg)
+                y += line_h
+            else:
+                y += line_h * paragraph_gap
 
     if ss > 1:
         img = img.resize((width, max(1, int(round(total_h / ss)))), Image.LANCZOS)

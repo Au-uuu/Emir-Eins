@@ -14,7 +14,8 @@ QQ 文本消息的字号是固定的，「帮助」这种长文本一发出来�
 | `QQ_BOT_HELP_WIDTH` | 1280 | 画布宽度（越大 → 在 QQ 里显示越小） |
 | `QQ_BOT_HELP_FONTSIZE` | 28 | 字号 |
 | `QQ_BOT_HELP_ALPHA` | 120 | 面板不透明度（越小背景越透） |
-| `QQ_BOT_HELP_QUALITY` | 85 | JPEG 质量 |
+| `QQ_BOT_HELP_QUALITY` | 72 | JPEG 质量。**实测 85→72 体积降 1/3 而肉眼几乎无差**；再往下小字开始发毛 |
+| `QQ_BOT_HELP_COLUMNS` | 1 | 分栏数。**实测两栏反而更高**（每栏变窄→长行折行→总行数增加，admin 帮助 1783→1896），所以保持单栏 |
 
 为什么输出 JPEG
 ---------------
@@ -84,6 +85,7 @@ def _render(text: str) -> bytes | None:
             font_size=_int_env("QQ_BOT_HELP_FONTSIZE", 28),
             background=path,
             panel_alpha=_int_env("QQ_BOT_HELP_ALPHA", 120),
+            columns=_int_env("QQ_BOT_HELP_COLUMNS", 1),
         )
         img = Image.open(io.BytesIO(png)).convert("RGB")
         buf = io.BytesIO()
@@ -91,7 +93,7 @@ def _render(text: str) -> bytes | None:
         img.save(
             buf,
             format="JPEG",
-            quality=_int_env("QQ_BOT_HELP_QUALITY", 85),
+            quality=_int_env("QQ_BOT_HELP_QUALITY", 72),
             optimize=True,
             subsampling=0,
         )
