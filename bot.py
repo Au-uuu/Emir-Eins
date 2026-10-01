@@ -23,6 +23,7 @@ import botpy
 from botpy.message import C2CMessage, GroupMessage
 from dotenv import load_dotenv
 
+import help_image
 import persona
 import sensitive
 import watchdog
@@ -572,9 +573,19 @@ async def _send_preview_sheet(
 
 
 async def _reply_image_bytes(
-    message, api, scope: str, scene_id: str, data: bytes, name: str
+    message,
+    api,
+    scope: str,
+    scene_id: str,
+    data: bytes,
+    name: str,
+    keyboard: dict | None = None,
 ) -> bool:
-    """把一段图片字节落临时文件、上传换 file_info，再作为被动回复发出。"""
+    """把一段图片字节落临时文件、上传换 file_info，再作为被动回复发出。
+
+    ``keyboard`` 用于试探「图片消息能不能带按钮」——QQ 官方没写明白，所以由调用方
+    先带按钮试一次，被拒再不带按钮重发。
+    """
     if not data:
         return False
     fd, tmp = tempfile.mkstemp(suffix=".jpg")
@@ -583,7 +594,10 @@ async def _reply_image_bytes(
             fh.write(data)
         up = uploader_of(api)
         file_info = await _upload_local_image(up, scope, scene_id, tmp, name)
-        await message.reply(msg_type=7, media={"file_info": file_info})
+        kwargs = {"msg_type": 7, "media": {"file_info": file_info}}
+        if keyboard:
+            kwargs["keyboard"] = keyboard
+        await message.reply(**kwargs)
         return True
     except Exception as exc:  # noqa: BLE001
         log.warning("发送图片失败: %s", exc)
@@ -1569,11 +1583,42 @@ def build_help_keyboard() -> dict:
     return {"content": {"rows": rows}}
 
 
-async def send_help(message, full: bool = False) -> None:
-    """发送帮助。full=True 时给管理员显示全部指令。优先带按钮，失败退化为纯文本。"""
+# 实测结论：图片消息能不能带按钮。None=还没试过，False=试过且不行（下次直接不带）
+_image_keyboard_ok: bool | None = None
+
+
+async def send_help(message, api, scope: str, scene_id: str, full: bool = False) -> None:
+    """
+    发送帮助。
+
+    full=True 时给管理员显示全部指令。
+
+    优先发**图片**：长文本在 QQ 里按宽度缩放后字更小、一屏看得下更多。
+    路线是「图片+按钮 → 图片（不带按钮）→ 文本+按钮 → 纯文本」，逐级降级。
+    QQ 对「图片消息能否带按钮」没有明确说明，所以先带一次按钮试探，结论记在
+    `_image_keyboard_ok` 里，避免每次都想当然地失败一次。
+    """
+    global _image_keyboard_ok
+
     text = ADMIN_HELP_TEXT if full else HELP_TEXT
+    keyboard = build_help_keyboard()
+
+    image = await asyncio.to_thread(help_image.render, text)
+    if image:
+        if _image_keyboard_ok is not False:
+            if await _reply_image_bytes(
+                message, api, scope, scene_id, image, "help.jpg", keyboard
+            ):
+                _image_keyboard_ok = True
+                return
+            _image_keyboard_ok = False
+            log.info("[帮助] 图片带按钮被拒（已记住结论），改为不带按钮重发")
+        if await _reply_image_bytes(message, api, scope, scene_id, image, "help.jpg"):
+            return
+        log.warning("[帮助] 图片发送失败，退回文本形态")
+
     try:
-        await message.reply(content=text, keyboard=build_help_keyboard())
+        await message.reply(content=text, keyboard=keyboard)
     except Exception as exc:  # noqa: BLE001
         log.warning("发送带按钮的帮助失败，退化为纯文本: %s", exc)
         try:
@@ -1669,7 +1714,7 @@ async def handle_command(message, api, scope: str, scene_id: str, content: str) 
     if cmd in ("/help", "帮助", "/帮助", "菜单"):
         # 管理员私聊里给完整指令表；群里/普通用户只给用户指令
         full = scope == "c2c" and await store.is_admin(author_openid(message))
-        await send_help(message, full=full)
+        await send_help(message, api, scope, scene_id, full=full)
         return True
 
     if cmd in ("/ping", "/在线", "在线"):
@@ -1807,7 +1852,7 @@ class MyClient(botpy.Client):
         try:
             # 只有 @ 没有任何内容 → 视为 /help
             if not content:
-                await send_help(message)
+                await send_help(message, self.api, "group", message.group_openid)
                 return
             # 指令照常处理；认不出的内容直接无视，不做任何回复
             if await handle_command(
@@ -1834,7 +1879,7 @@ class MyClient(botpy.Client):
         if not content:
             # 只 @ 了机器人、没写正文 → 与「群@」事件保持一致，给帮助
             if mentions_me:
-                await send_help(message)
+                await send_help(message, self.api, "group", message.group_openid)
             return
 
         log.info(
@@ -1911,7 +1956,11 @@ class MyClient(botpy.Client):
                     log.info("[单聊] 只发了图片：已记入上下文，不回复")
                     return
                 await send_help(
-                    message, full=await store.is_admin(author_openid(message))
+                    message,
+                    self.api,
+                    "c2c",
+                    openid or "unknown",
+                    full=await store.is_admin(author_openid(message)),
                 )
                 return
             if await handle_command(message, self.api, "c2c", openid, content):

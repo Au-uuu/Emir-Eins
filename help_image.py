@@ -1,0 +1,110 @@
+"""把 `/help` 渲染成一张带背景图的图片。
+
+为什么
+------
+QQ 文本消息的字号是固定的，「帮助」这种长文本一发出来就占满整屏。转成图片后 QQ 会
+按聊天窗口宽度**等比缩放**，画布越宽、缩放越多、字越小 —— 一屏就能看下更多内容
+（原理与参数说明见 `text_image.py`）。
+
+配置（.env）
+------------
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `QQ_BOT_HELP_BG` | `data/help_bg.jpg` | 背景图。**这张图不存在就自动退回纯文本** |
+| `QQ_BOT_HELP_WIDTH` | 1280 | 画布宽度（越大 → 在 QQ 里显示越小） |
+| `QQ_BOT_HELP_FONTSIZE` | 28 | 字号 |
+| `QQ_BOT_HELP_ALPHA` | 120 | 面板不透明度（越小背景越透） |
+| `QQ_BOT_HELP_QUALITY` | 85 | JPEG 质量 |
+
+为什么输出 JPEG
+---------------
+带照片背景时 PNG 压不动（1280 宽的帮助图约 **2.2MB**，3Mbps 上传要 6 秒）。
+转 JPEG 后约 **370KB**，上传 1 秒出头。另外把色度采样设成 4:4:4，
+避免照片上的中文小字被 JPEG 色度压缩糊掉 —— 这是"照片上的文字"能不能看的关键。
+
+缓存
+----
+帮助文本是静态的，所以只渲染一次，之后返回内存里的同一份字节。
+"""
+
+from __future__ import annotations
+
+import io
+import logging
+import os
+import threading
+
+from PIL import Image
+
+from text_image import render_text_image
+
+log = logging.getLogger("qqbot.help")
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_BG = os.path.join(BASE_DIR, "data", "help_bg.jpg")
+
+_lock = threading.Lock()
+_cache: dict[str, bytes | None] = {}
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, "") or default)
+    except ValueError:
+        return default
+
+
+def bg_path() -> str:
+    return os.getenv("QQ_BOT_HELP_BG", "") or DEFAULT_BG
+
+
+def render(text: str) -> bytes | None:
+    """渲染帮助图，返回 JPEG 字节；没配背景图或渲染失败则返回 None（调用方退回文本）。"""
+    with _lock:
+        if text in _cache:
+            return _cache[text]
+
+    data = _render(text)
+
+    with _lock:
+        _cache[text] = data
+    return data
+
+
+def _render(text: str) -> bytes | None:
+    path = bg_path()
+    if not path or not os.path.isfile(path):
+        log.info("未配置帮助背景图，/help 保持文本形态：%s", path)
+        return None
+
+    try:
+        png = render_text_image(
+            text,
+            width=_int_env("QQ_BOT_HELP_WIDTH", 1280),
+            font_size=_int_env("QQ_BOT_HELP_FONTSIZE", 28),
+            background=path,
+            panel_alpha=_int_env("QQ_BOT_HELP_ALPHA", 120),
+        )
+        img = Image.open(io.BytesIO(png)).convert("RGB")
+        buf = io.BytesIO()
+        # subsampling=0 -> 4:4:4，保住中文小字的边缘
+        img.save(
+            buf,
+            format="JPEG",
+            quality=_int_env("QQ_BOT_HELP_QUALITY", 85),
+            optimize=True,
+            subsampling=0,
+        )
+        data = buf.getvalue()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("渲染帮助图失败，退回文本：%s", exc)
+        return None
+
+    log.info(
+        "帮助图已生成：%dx%d %.0f KB（背景 %s）",
+        img.width,
+        img.height,
+        len(data) / 1024,
+        path,
+    )
+    return data

@@ -170,9 +170,15 @@ async def main() -> int:
     await bot.do_gallery(m, "/图库 不存在")
     check("不存在的关键词给提示", "没有图片" in (m.text_replies[0] or ""))
 
-    print("\n[8] /help 分支（带按钮，失败要能兜底）")
+    print("\n[8] /help 分支（无背景图时退回 文本+按钮）")
+    # 图片形态由 _test_help_image.py 专门覆盖；这里固定成「没有背景图」，
+    # 保证本用例只验证文本兜底这条路径。
+    os.environ["QQ_BOT_HELP_BG"] = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "no_such_help_bg.jpg"
+    )
+    bot.help_image._cache.clear()
     m = FakeMessage("/help")
-    await bot.send_help(m)
+    await bot.send_help(m, None, "group", "G_TEST")
     check("帮助已发送", len(m.replies) == 1)
     check("带上了键盘", m.replies[0].get("keyboard") is not None)
     check("帮助里写了 /图库 统计", "/图库 统计" in bot.HELP_TEXT)

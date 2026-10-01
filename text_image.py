@@ -31,6 +31,11 @@ QQ 的文本消息字号是固定的，帮助这类长文本一发出来就占�
     for w in (1080, 1280, 1600):
         open(f"help_{w}.png", "wb").write(render_text_image(HELP_TEXT, width=w))
 
+    # 带背景图：铺满画布 + 自动压一层半透明圆角面板保证可读
+    png = render_text_image(HELP_TEXT, width=1280, background="help_bg.png")
+    # 背景越花，面板越要不透明：panel_alpha=230
+    # 想要深色海报风：panel_color=(20,20,24), panel_alpha=180, fg=(245,245,245)
+
 注意
 ----
 QQ 的「按钮」（keyboard）只能挂在**文本消息**上，换成图片消息后按钮就带不了了。
@@ -42,7 +47,7 @@ from __future__ import annotations
 import io
 from typing import List, Sequence, Tuple
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 # 复用项目里已有的「找一个可用的中文字体」逻辑（image_store 内部私有函数，
 # 同包内复用，避免两份字体查找表各自漂移）
@@ -90,6 +95,18 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font, max_w: int) -> List[str]:
     return lines
 
 
+def _cover_image(path: str, width: int, height: int) -> Image.Image:
+    """把背景图按「覆盖」方式铺满画布（等比缩放 + 居中裁剪，不变形）。"""
+    with Image.open(path) as raw:
+        img = raw.convert("RGB")
+    scale = max(width / img.width, height / img.height)
+    new_size = (max(1, round(img.width * scale)), max(1, round(img.height * scale)))
+    img = img.resize(new_size, Image.LANCZOS)
+    left = (img.width - width) // 2
+    top = (img.height - height) // 2
+    return img.crop((left, top, left + width, top + height))
+
+
 def render_text_image(
     text: str,
     *,
@@ -102,12 +119,27 @@ def render_text_image(
     bg: Tuple[int, int, int] = BG,
     fg: Tuple[int, int, int] = FG,
     max_height: int = 20000,
+    background: str | None = None,
+    panel_color: Tuple[int, int, int] = (255, 255, 255),
+    panel_alpha: int = 214,
+    panel_radius: int = 28,
+    panel_margin: int = 26,
+    image_top: int = 0,
+    panel_blur: int = 0,
 ) -> bytes:
     """把 ``text`` 渲染成 PNG bytes。
 
     :param width: 画布宽度（像素）。越大 → 在 QQ 里显示越小。
     :param font_size: 字号（像素）。与 ``width`` 的比值决定观感。
     :param max_height: 高度上限，超出则抛 ``ValueError``，避免生成畸形长图。
+    :param background: 背景图路径。给了就铺满画布，并在其上盖一层半透明圆角面板，
+        保证文字在任何花哨背景上都读得清（不给就是纯色底）。
+    :param panel_alpha: 面板不透明度（0-255）。背景越花，越需要调高。
+    :param image_top: 面板**上方**额外留出的背景高度（像素）。用于竖版构图：
+        上面露插画、下面放文字面板。
+    :param panel_blur: 把面板**后面的背景**模糊多少像素（0=不模糊）。
+        这是做出「磨砂玻璃」的关键：模糊后背景依然可见，但不再和文字抢注意力，
+        于是面板可以做到很透也依然清晰。
     """
     if width <= 0 or font_size <= 0:
         raise ValueError("width / font_size 必须为正数")
@@ -122,7 +154,8 @@ def render_text_image(
 
     ascent, descent = font.getmetrics()
     line_h = (ascent + descent) * line_spacing
-    total_h = pad * 2
+    top = max(0, int(image_top)) * ss
+    total_h = top + pad * 2
     for ln in lines:
         total_h += line_h * (1 + paragraph_gap) if not ln else line_h
     total_h = int(round(total_h))
@@ -132,10 +165,33 @@ def render_text_image(
             f"渲染高度 {total_h // ss}px 超过上限 {max_height}px，请加大宽度或减小字号"
         )
 
-    img = Image.new("RGB", (w, total_h), bg)
+    if background:
+        img = _cover_image(background, w, total_h)
+        m = panel_margin * ss
+        panel_box = [m, m + top, w - m, total_h - m]
+
+        # 磨砂玻璃：先把面板覆盖到的背景模糊掉，再叠半透明面板。
+        # 于是面板可以做得**很透**（背景仍然看得见），文字却不会被背景细节干扰。
+        if panel_blur > 0:
+            blurred = img.filter(ImageFilter.GaussianBlur(panel_blur * ss))
+            mask = Image.new("L", (w, total_h), 0)
+            ImageDraw.Draw(mask).rounded_rectangle(
+                panel_box, radius=panel_radius * ss, fill=255
+            )
+            img = Image.composite(blurred, img, mask)
+
+        overlay = Image.new("RGBA", (w, total_h), (0, 0, 0, 0))
+        ImageDraw.Draw(overlay).rounded_rectangle(
+            panel_box,
+            radius=panel_radius * ss,
+            fill=panel_color + (panel_alpha,),
+        )
+        img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+    else:
+        img = Image.new("RGB", (w, total_h), bg)
     draw = ImageDraw.Draw(img)
 
-    y = float(pad)
+    y = float(top + pad)
     for ln in lines:
         if ln:
             draw.text((pad, y), ln, font=font, fill=fg)
