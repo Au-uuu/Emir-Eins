@@ -148,6 +148,13 @@ async def main() -> int:
     check("最终发送成功", ok is True)
     check("失败后强制重传了一次", len(uploads) == 2, str(uploads))
 
+    print("\n[7] 启动预热：两个变体都提前渲染好")
+    help_image._cache.clear()
+    await bot.warm_up_help_images()
+    check("用户版已进缓存", bot.HELP_TEXT in help_image._cache)
+    check("管理员版已进缓存", bot.ADMIN_HELP_TEXT in help_image._cache)
+    check("预热的是图片字节", isinstance(help_image._cache.get(bot.HELP_TEXT), bytes))
+
     print(f"\n{'=' * 50}")
     print(f"失败 {failures} 项")
     return 1 if failures else 0
