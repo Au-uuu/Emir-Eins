@@ -12,6 +12,7 @@ QQ 官方机器人 —— 群 @ / 群全量 / 单聊 消息响应骨架
 """
 
 import asyncio
+import hashlib
 import logging
 import os
 import re
@@ -163,6 +164,45 @@ store = ImageStore()
 
 # 人格聊天的短期记忆（按会话隔离，默认每会话 100 条）
 chat = ChatStore()
+
+# ---------------------------------------------------------------------------
+# 图片上传结果（file_info）缓存
+#
+# 为什么：QQ 对**相同内容**的文件返回同一个 file_info（实测：同一张帮助图三次上传，
+# 拿回的 file_info 完全相同），但上传本身必须走「预上传 → 分片 PUT → 分片确认 →
+# 合并」四步，实测约 2 秒。缓存下来就能省掉这 2 秒。
+#
+# 两个约束决定了缓存键与兜底策略：
+#   1. **上传接口按会话隔离**：`/v2/groups/{群openid}` 与 `/v2/users/{openid}` 不互通
+#      （官方文档明确），所以 file_info 只对同一会话有效 → 键要带 scope:scene_id
+#   2. **file_info 有时效（ttl）**：过期后发送会失败 → 设保守 TTL，且发送失败时
+#      忽略缓存强制重传一次（见 _reply_image_bytes），能自愈
+# ---------------------------------------------------------------------------
+_FILE_INFO_TTL = 600.0  # 保守取 10 分钟
+_FILE_INFO_MAX = 512  # 上限保护：每会话每文件一条，别让缓存无限长大
+_file_info_cache: dict[tuple[str, str], tuple[float, str]] = {}
+
+
+def _file_info_key(scope: str, scene_id: str, data: bytes) -> tuple[str, str]:
+    return (f"{scope}:{scene_id}", hashlib.sha256(data).hexdigest())
+
+
+def _file_info_get(key: tuple[str, str]) -> str | None:
+    hit = _file_info_cache.get(key)
+    if not hit:
+        return None
+    ts, info = hit
+    if time.time() - ts > _FILE_INFO_TTL:
+        _file_info_cache.pop(key, None)
+        return None
+    return info
+
+
+def _file_info_put(key: tuple[str, str], info: str) -> None:
+    _file_info_cache[key] = (time.time(), info)
+    if len(_file_info_cache) > _FILE_INFO_MAX:
+        oldest = min(_file_info_cache, key=lambda k: _file_info_cache[k][0])
+        _file_info_cache.pop(oldest, None)
 
 # 启动时把人格聊天的状态写进日志，运维一眼就能看出有没有生效
 if persona.available():
@@ -497,10 +537,42 @@ async def _upload_once(
 
 
 async def _upload_local_image(
-    up: MediaUploader, scope: str, scene_id: str, path: str, name: str
+    up: MediaUploader,
+    scope: str,
+    scene_id: str,
+    path: str,
+    name: str,
+    force_fresh: bool = False,
 ) -> str:
     """
     上传本地图片，返回 file_info。
+
+    同一会话内**同一份文件**会命中缓存，直接返回上次的 file_info —— 省掉约 2 秒的
+    「预上传 → 分片 → 合并」。图片按内容哈希去重，所以内容一样就是同一个 file_info。
+
+    :param force_fresh: 忽略缓存强制重传。用于缓存里的 file_info 已过期、导致发送
+        失败时重试。
+    """
+    with open(path, "rb") as fh:
+        data = fh.read()
+    key = _file_info_key(scope, scene_id, data)
+
+    if not force_fresh:
+        cached = _file_info_get(key)
+        if cached:
+            log.info("[图片] 命中 file_info 缓存，跳过上传")
+            return cached
+
+    info = await _upload_local_image_uncached(up, scope, scene_id, path, name)
+    _file_info_put(key, info)
+    return info
+
+
+async def _upload_local_image_uncached(
+    up: MediaUploader, scope: str, scene_id: str, path: str, name: str
+) -> str:
+    """
+    真正走一遍上传流程（无缓存）。
 
     平台对动图的支持不稳定：GIF 在部分版本会被以 850019 拒绝。这里先按原格式
     试一次——发得出去就保留动图；被拒则自动转成 PNG 首帧重试，保证发得出去。
@@ -577,9 +649,19 @@ async def _reply_image_bytes(
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
         up = uploader_of(api)
-        file_info = await _upload_local_image(up, scope, scene_id, tmp, name)
-        await message.reply(msg_type=7, media={"file_info": file_info})
-        return True
+        # 第一次可能用的是缓存里的 file_info；file_info 有 ttl，过期会让发送失败，
+        # 这时忽略缓存强制重传一次即可自愈。
+        for attempt in (1, 2):
+            file_info = await _upload_local_image(
+                up, scope, scene_id, tmp, name, force_fresh=(attempt == 2)
+            )
+            try:
+                await message.reply(msg_type=7, media={"file_info": file_info})
+                return True
+            except Exception as exc:  # noqa: BLE001
+                if attempt == 2:
+                    raise
+                log.info("[图片] 用缓存 file_info 发送失败，忽略缓存重传一次：%s", exc)
     except Exception as exc:  # noqa: BLE001
         log.warning("发送图片失败: %s", exc)
         return False

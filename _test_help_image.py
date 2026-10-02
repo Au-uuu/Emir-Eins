@@ -41,6 +41,8 @@ class FakeMessage:
 
 async def main() -> int:
     tmp = tempfile.mkdtemp(prefix="qqbot_help_")
+    # 下面几节会把 _reply_image_bytes 换成假的，这里先留一份真的，后面换回来
+    real_reply_image_bytes = bot._reply_image_bytes
 
     # ---------------- 1. 没配背景图 ----------------
     print("\n[1] 没配背景图 → 退回纯文本")
@@ -90,6 +92,61 @@ async def main() -> int:
     check("回了文本", "我是群助手" in m3.text, m3.text[:40])
     check("不再有 keyboard 字段", "keyboard" not in m3.replies[0],
           str(list(m3.replies[0].keys())))
+
+    print("\n[5] file_info 缓存：同一会话同一文件只上传一次")
+    bot._reply_image_bytes = real_reply_image_bytes  # 换回真的实现
+    bot._file_info_cache.clear()
+    uploads: list = []
+
+    async def fake_uncached(up, scope, scene_id, path, name):
+        uploads.append((scope, scene_id, name))
+        return f"fileinfo#{len(uploads)}"
+
+    bot._upload_local_image_uncached = fake_uncached
+
+    class DummyApi:
+        pass
+
+    class SendMsg:
+        def __init__(self):
+            self.replies: list = []
+
+        async def reply(self, **kwargs):
+            self.replies.append(kwargs)
+            return {"id": "x"}
+
+    payload = b"same-bytes-for-cache-test"
+    check("第一次发送成功",
+          await bot._reply_image_bytes(SendMsg(), DummyApi(), "group", "G1", payload, "a.jpg"))
+    check("第二次发送成功（走缓存）",
+          await bot._reply_image_bytes(SendMsg(), DummyApi(), "group", "G1", payload, "a.jpg"))
+    check("只真正上传了一次", len(uploads) == 1, str(uploads))
+
+    await bot._reply_image_bytes(SendMsg(), DummyApi(), "group", "G2", payload, "a.jpg")
+    check("换个群要重新上传（上传接口按会话隔离）", len(uploads) == 2, str(uploads))
+
+    await bot._reply_image_bytes(SendMsg(), DummyApi(), "c2c", "U1", b"other", "b.jpg")
+    check("内容不同要重新上传", len(uploads) == 3, str(uploads))
+
+    print("\n[6] file_info 过期导致发送失败 → 忽略缓存重传一次自愈")
+    bot._file_info_cache.clear()
+    uploads.clear()
+
+    class FlakyMsg:
+        def __init__(self):
+            self.n = 0
+
+        async def reply(self, **kwargs):
+            self.n += 1
+            if self.n == 1:
+                raise RuntimeError("file_info 已过期")
+            return {"id": "x"}
+
+    ok = await bot._reply_image_bytes(
+        FlakyMsg(), DummyApi(), "group", "G9", b"flaky-payload", "c.jpg"
+    )
+    check("最终发送成功", ok is True)
+    check("失败后强制重传了一次", len(uploads) == 2, str(uploads))
 
     print(f"\n{'=' * 50}")
     print(f"失败 {failures} 项")

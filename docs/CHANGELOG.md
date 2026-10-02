@@ -29,7 +29,7 @@
 | 2026-09-28 | 单聊只发图片时不再回复 `/help`（图片消息正文为空被误判为「空内容」） | [c2c-image-silent](changes/2026-09-28-c2c-image-silent.md) |
 | 2026-09-28 | 修正 Noto CJK 取到日文字形；新增文本转图片模块（尚未接入 `bot.py`） | [font-face-and-text-image](changes/2026-09-28-font-face-and-text-image.md) |
 | 2026-09-30 | 人格聊天：单聊/群@ 非指令文本接入 `qwen-flash-character`，按会话隔离记忆 + 敏感词过滤 | [persona-chat](changes/2026-09-30-persona-chat.md) |
-| 2026-10-02 | `/help` 改为发送图片（带背景图、JPEG 压缩）；移除从未生效的帮助按钮 | [help-image](changes/2026-10-02-help-image.md) |
+| 2026-10-02 | `/help` 改为发送图片（带背景图、JPEG 压缩）；移除从未生效的帮助按钮；file_info 缓存把上传 2 秒降到 0 | [help-image](changes/2026-10-02-help-image.md) |
 
 ## 约定
 
