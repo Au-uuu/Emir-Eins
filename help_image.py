@@ -12,16 +12,25 @@ QQ 文本消息的字号是固定的，「帮助」这种长文本一发出来�
 |---|---|---|
 | `QQ_BOT_HELP_BG` | `data/help_bg.jpg` | 背景图。**这张图不存在就自动退回纯文本** |
 | `QQ_BOT_HELP_WIDTH` | 1280 | 画布宽度（越大 → 在 QQ 里显示越小） |
-| `QQ_BOT_HELP_FONTSIZE` | 28 | 字号 |
-| `QQ_BOT_HELP_ALPHA` | 120 | 面板不透明度（越小背景越透） |
-| `QQ_BOT_HELP_QUALITY` | 72 | JPEG 质量。**实测 85→72 体积降 1/3 而肉眼几乎无差**；再往下小字开始发毛 |
-| `QQ_BOT_HELP_COLUMNS` | 1 | 分栏数。**实测两栏反而更高**（每栏变窄→长行折行→总行数增加，admin 帮助 1783→1896），所以保持单栏 |
+| `QQ_BOT_HELP_FONTSIZE` | 24 | 字号 |
+| `QQ_BOT_HELP_ALPHA` | 190 | 面板不透明度（越小背景越透、**文件越大**） |
+| `QQ_BOT_HELP_QUALITY` | 55 | JPEG 质量 |
+| `QQ_BOT_HELP_COLUMNS` | 1 | 分栏数（实测两栏更差，别开） |
+| `QQ_BOT_HELP_LINESPACING` | 1.25 | 行距倍数（越小图越矮、文件越小） |
+| `QQ_BOT_HELP_PARAGAP` | 0.30 | 空行额外高度倍数 |
+| `QQ_BOT_HELP_BGMAX` | 0 | 背景先缩到这个宽度再铺（0=不缩） |
 
 为什么输出 JPEG
 ---------------
-带照片背景时 PNG 压不动（1280 宽的帮助图约 **2.2MB**，3Mbps 上传要 6 秒）。
-转 JPEG 后约 **370KB**，上传 1 秒出头。另外把色度采样设成 4:4:4，
-避免照片上的中文小字被 JPEG 色度压缩糊掉 —— 这是"照片上的文字"能不能看的关键。
+带照片背景时 PNG 压不动（1280 宽约 **2.2MB**，3Mbps 上传要 6 秒）。
+调参后的 JPEG 约 **117KB**（群/普通人版）与 **161KB**（管理员版），上传 1 秒内。
+
+几个实测结论（详见 `docs/changes/2026-10-02-help-image.md`）：
+
+- **面板越透明，文件越大**：背景细节透出来 = 熵更高。`alpha` 120→190 约省 15%。
+- **老实用 4:4:4 反而更亏**：正文是深灰字配浅色面板，几乎没有色度信息，
+  4:2:0 在这个场景下画质损失很小、体积却明显更小，所以这里用 4:2:0。
+- **「背景柔化」在低质量下没用**：q55 早已把照片细节丢光了，再缩背景不省字节。
 
 缓存
 ----
@@ -55,6 +64,13 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
+def _float_env(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, "") or default)
+    except ValueError:
+        return default
+
+
 def bg_path() -> str:
     return os.getenv("QQ_BOT_HELP_BG", "") or DEFAULT_BG
 
@@ -82,20 +98,24 @@ def _render(text: str) -> bytes | None:
         png = render_text_image(
             text,
             width=_int_env("QQ_BOT_HELP_WIDTH", 1280),
-            font_size=_int_env("QQ_BOT_HELP_FONTSIZE", 28),
+            font_size=_int_env("QQ_BOT_HELP_FONTSIZE", 24),
+            line_spacing=_float_env("QQ_BOT_HELP_LINESPACING", 1.25),
+            paragraph_gap=_float_env("QQ_BOT_HELP_PARAGAP", 0.30),
             background=path,
-            panel_alpha=_int_env("QQ_BOT_HELP_ALPHA", 120),
+            panel_alpha=_int_env("QQ_BOT_HELP_ALPHA", 190),
             columns=_int_env("QQ_BOT_HELP_COLUMNS", 1),
+            background_max=_int_env("QQ_BOT_HELP_BGMAX", 0),
         )
         img = Image.open(io.BytesIO(png)).convert("RGB")
         buf = io.BytesIO()
-        # subsampling=0 -> 4:4:4，保住中文小字的边缘
+        # subsampling=2 -> 4:2:0。正文是深灰字配浅色面板，几乎没有色度信息，
+        # 这个场景下 4:2:0 的画质损失很小、体积明显更小（实测过才这么选）。
         img.save(
             buf,
             format="JPEG",
-            quality=_int_env("QQ_BOT_HELP_QUALITY", 72),
+            quality=_int_env("QQ_BOT_HELP_QUALITY", 55),
             optimize=True,
-            subsampling=0,
+            subsampling=2,
         )
         data = buf.getvalue()
     except Exception as exc:  # noqa: BLE001

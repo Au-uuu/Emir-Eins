@@ -1649,28 +1649,6 @@ async def send_help(message, api, scope: str, scene_id: str, full: bool = False)
         log.exception("发送帮助失败: %s", exc)
 
 
-async def warm_up_help_images() -> None:
-    """
-    预热帮助图。
-
-    首次渲染约 2 秒（Noto CJK 折行 + 背景 cover-fit + JPEG 编码），而 `help_image`
-    只缓存**渲染结果**，所以这 2 秒会砸在第一个发 `/help` 的人头上。启动时先用后台
-    线程渲染一遍，把这个成本挪到没人等的时候。
-
-    两个变体都要渲染：群/普通人用 HELP_TEXT，管理员私聊用 ADMIN_HELP_TEXT。
-    """
-    for label, text in (("用户版", HELP_TEXT), ("管理员版", ADMIN_HELP_TEXT)):
-        try:
-            data = await asyncio.to_thread(help_image.render, text)
-            log.info(
-                "帮助图预热（%s）：%s",
-                label,
-                f"{len(data) / 1024:.0f} KB" if data else "未启用（没配背景图）",
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.warning("帮助图预热失败（不影响使用）：%s", exc)
-
-
 def mentioned_bot(message) -> bool:
     """
     这条消息是否 **@ 了机器人**。
@@ -1876,8 +1854,6 @@ class MyClient(botpy.Client):
             self._watchdog_task = asyncio.create_task(
                 watchdog.watch(WATCHDOG_IDLE_TIMEOUT)
             )
-        # 预热帮助图：首次渲染约 2 秒，别砸在第一个发 /help 的人头上
-        asyncio.create_task(warm_up_help_images())
 
     # 群里被 @ 时触发
     async def on_group_at_message_create(self, message: GroupMessage):

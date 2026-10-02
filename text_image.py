@@ -96,10 +96,20 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font, max_w: int) -> List[str]:
     return lines
 
 
-def _cover_image(path: str, width: int, height: int) -> Image.Image:
-    """把背景图按「覆盖」方式铺满画布（等比缩放 + 居中裁剪，不变形）。"""
+def _cover_image(path: str, width: int, height: int, max_width: int = 0) -> Image.Image:
+    """把背景图按「覆盖」方式铺满画布（等比缩放 + 居中裁剪，不变形）。
+
+    :param max_width: 先把原图缩到这个宽度上限再铺（0=不缩）。
+        照片的**细节量**才是 JPEG 体积的大头，先缩一次能压得多得多；
+        代价是背景变柔（对「衬在文字后面」的用途通常无所谓，甚至更好看）。
+    """
     with Image.open(path) as raw:
         img = raw.convert("RGB")
+    if max_width and img.width > max_width:
+        ratio = max_width / img.width
+        img = img.resize(
+            (max_width, max(1, round(img.height * ratio))), Image.LANCZOS
+        )
     scale = max(width / img.width, height / img.height)
     new_size = (max(1, round(img.width * scale)), max(1, round(img.height * scale)))
     img = img.resize(new_size, Image.LANCZOS)
@@ -129,6 +139,7 @@ def render_text_image(
     panel_blur: int = 0,
     columns: int = 1,
     column_gap: int = 56,
+    background_max: int = 0,
 ) -> bytes:
     """把 ``text`` 渲染成 PNG bytes。
 
@@ -145,6 +156,8 @@ def render_text_image(
         于是面板可以做到很透也依然清晰。
     :param columns: 分几栏排版。**2 栏能在宽度不变（字一样小）的前提下把高度砍掉近一半**，
         既省流量又少滚动；分栏点会挑最靠近中点的空行，避免把一组指令劈成两半。
+    :param background_max: 背景图先缩到这个宽度上限再铺（0=不缩）。照片的**细节量**是
+        JPEG 体积的大头，缩一次能显著减小文件；代价是背景变柔。
     """
     if width <= 0 or font_size <= 0:
         raise ValueError("width / font_size 必须为正数")
@@ -194,7 +207,7 @@ def render_text_image(
         )
 
     if background:
-        img = _cover_image(background, w, total_h)
+        img = _cover_image(background, w, total_h, background_max * ss)
         m = panel_margin * ss
         panel_box = [m, m + top, w - m, total_h - m]
 
