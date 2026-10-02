@@ -66,31 +66,20 @@ async def main() -> int:
           help_image.render("第一行文字\n第二行文字") is data)
 
     # ---------------- 3. 降级路线 ----------------
-    print("\n[3] 降级路线：图片+按钮 → 图片 → 文本")
+    print("\n[3] 图片发得出去 → 就用图片，不再回文本")
     calls: list = []
 
-    async def image_with_keyboard_rejected(message, api, scope, scene_id, data,
-                                           name, keyboard=None):
-        calls.append(keyboard)
-        return keyboard is None  # 带按钮必失败，不带按钮成功
+    async def ok_send(message, api, scope, scene_id, data, name):
+        calls.append(name)
+        return True
 
-    bot._reply_image_bytes = image_with_keyboard_rejected
-    bot._image_keyboard_ok = None
-
+    bot._reply_image_bytes = ok_send
     m = FakeMessage()
     await bot.send_help(m, None, "group", "G1")
-    check("第一次尝试带了按钮", len(calls) == 2 and calls[0] is not None, str(len(calls)))
-    check("被拒后不带按钮重发", len(calls) == 2 and calls[1] is None, str(calls))
-    check("记住了「图片带不了按钮」", bot._image_keyboard_ok is False)
-    check("没有退回文本", m.replies == [], str(m.replies))
+    check("走的是图片", calls == ["help.jpg"], str(calls))
+    check("没有额外回文本", m.replies == [], str(m.replies))
 
-    calls.clear()
-    m2 = FakeMessage()
-    await bot.send_help(m2, None, "group", "G1")
-    check("下次直接不带按钮，不再浪费一次上传",
-          len(calls) == 1 and calls[0] is None, str(calls))
-
-    print("\n[4] 图片整条路走不通 → 退回文本 + 按钮")
+    print("\n[4] 图片发不出去 → 退回纯文本（且不带按钮）")
 
     async def always_fail(*args, **kwargs):
         return False
@@ -99,7 +88,8 @@ async def main() -> int:
     m3 = FakeMessage()
     await bot.send_help(m3, None, "group", "G1")
     check("回了文本", "我是群助手" in m3.text, m3.text[:40])
-    check("文本带按钮", bool(m3.replies and m3.replies[0].get("keyboard")))
+    check("不再有 keyboard 字段", "keyboard" not in m3.replies[0],
+          str(list(m3.replies[0].keys())))
 
     print(f"\n{'=' * 50}")
     print(f"失败 {failures} 项")

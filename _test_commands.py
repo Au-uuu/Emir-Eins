@@ -180,7 +180,8 @@ async def main() -> int:
     m = FakeMessage("/help")
     await bot.send_help(m, None, "group", "G_TEST")
     check("帮助已发送", len(m.replies) == 1)
-    check("带上了键盘", m.replies[0].get("keyboard") is not None)
+    check("不再带按钮（keyboard 已移除）", "keyboard" not in m.replies[0],
+          str(list(m.replies[0].keys())))
     check("帮助里写了 /图库 统计", "/图库 统计" in bot.HELP_TEXT)
     check("帮助里写了只有添加/删除/来只可省斜杠",
           "只有「添加 / 删除 / 来只」" in bot.HELP_TEXT)

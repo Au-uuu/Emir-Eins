@@ -210,12 +210,6 @@ ADMIN_HELP_TEXT = (
     "\n" + HELP_TEXT
 )
 
-# 帮助面板的按钮（点击后由机器人直接回复，不依赖客户端指令面板）
-HELP_BUTTONS = [
-    [("功能与指令", "/help", 1), ("随机来张图", "/来只", 4)],
-    [("图库列表", "/图库", 1)],
-]
-
 # /echo 可复读的最大字数，防止超长消息触发平台长度限制
 ECHO_MAX_LEN = 200
 
@@ -573,19 +567,9 @@ async def _send_preview_sheet(
 
 
 async def _reply_image_bytes(
-    message,
-    api,
-    scope: str,
-    scene_id: str,
-    data: bytes,
-    name: str,
-    keyboard: dict | None = None,
+    message, api, scope: str, scene_id: str, data: bytes, name: str
 ) -> bool:
-    """把一段图片字节落临时文件、上传换 file_info，再作为被动回复发出。
-
-    ``keyboard`` 用于试探「图片消息能不能带按钮」——QQ 官方没写明白，所以由调用方
-    先带按钮试一次，被拒再不带按钮重发。
-    """
+    """把一段图片字节落临时文件、上传换 file_info，再作为被动回复发出。"""
     if not data:
         return False
     fd, tmp = tempfile.mkstemp(suffix=".jpg")
@@ -594,10 +578,7 @@ async def _reply_image_bytes(
             fh.write(data)
         up = uploader_of(api)
         file_info = await _upload_local_image(up, scope, scene_id, tmp, name)
-        kwargs = {"msg_type": 7, "media": {"file_info": file_info}}
-        if keyboard:
-            kwargs["keyboard"] = keyboard
-        await message.reply(**kwargs)
+        await message.reply(msg_type=7, media={"file_info": file_info})
         return True
     except Exception as exc:  # noqa: BLE001
         log.warning("发送图片失败: %s", exc)
@@ -1557,74 +1538,31 @@ async def do_find_link(message, text: str) -> None:
     await message.reply(content="关联列表（主 ← 别名）：\n" + "\n".join(lines) + more)
 
 
-def build_help_keyboard() -> dict:
-    """把帮助按钮组装成内嵌键盘结构。"""
-    rows = []
-    for row in HELP_BUTTONS:
-        buttons = []
-        for i, (label, data, style) in enumerate(row):
-            buttons.append(
-                {
-                    "id": f"help_{data.strip('/') or 'x'}_{i}",
-                    "render_data": {
-                        "label": label,
-                        "visited_label": label,
-                        "style": style,
-                    },
-                    "action": {
-                        "type": 1,  # 回调按钮：点击后平台推送 INTERACTION_CREATE
-                        "permission": {"type": 2},  # 所有人可点
-                        "data": data,
-                        "unsupport_tips": "当前客户端版本不支持按钮，请直接发送指令",
-                    },
-                }
-            )
-        rows.append({"buttons": buttons})
-    return {"content": {"rows": rows}}
-
-
-# 实测结论：图片消息能不能带按钮。None=还没试过，False=试过且不行（下次直接不带）
-_image_keyboard_ok: bool | None = None
-
-
 async def send_help(message, api, scope: str, scene_id: str, full: bool = False) -> None:
     """
     发送帮助。
 
     full=True 时给管理员显示全部指令。
 
-    优先发**图片**：长文本在 QQ 里按宽度缩放后字更小、一屏看得下更多。
-    路线是「图片+按钮 → 图片（不带按钮）→ 文本+按钮 → 纯文本」，逐级降级。
-    QQ 对「图片消息能否带按钮」没有明确说明，所以先带一次按钮试探，结论记在
-    `_image_keyboard_ok` 里，避免每次都想当然地失败一次。
-    """
-    global _image_keyboard_ok
+    优先发**图片**（长文本在 QQ 里按宽度缩放后字更小、一屏看得下更多），
+    图片这条路走不通（没配背景图 / 渲染失败 / 上传失败）才退回文本。
 
+    按钮已移除：`/help` 曾挂过三个内嵌按钮，但实测**从未真正生效**
+    （点击事件的 `button_data` 恒为空，处理器直接 return），而且改成图片后
+    客户端也不再显示。需要找回时见 docs/changes/2026-10-02-help-image.md。
+    """
     text = ADMIN_HELP_TEXT if full else HELP_TEXT
-    keyboard = build_help_keyboard()
 
     image = await asyncio.to_thread(help_image.render, text)
+    if image and await _reply_image_bytes(message, api, scope, scene_id, image, "help.jpg"):
+        return
     if image:
-        if _image_keyboard_ok is not False:
-            if await _reply_image_bytes(
-                message, api, scope, scene_id, image, "help.jpg", keyboard
-            ):
-                _image_keyboard_ok = True
-                return
-            _image_keyboard_ok = False
-            log.info("[帮助] 图片带按钮被拒（已记住结论），改为不带按钮重发")
-        if await _reply_image_bytes(message, api, scope, scene_id, image, "help.jpg"):
-            return
         log.warning("[帮助] 图片发送失败，退回文本形态")
 
     try:
-        await message.reply(content=text, keyboard=keyboard)
+        await message.reply(content=text)
     except Exception as exc:  # noqa: BLE001
-        log.warning("发送带按钮的帮助失败，退化为纯文本: %s", exc)
-        try:
-            await message.reply(content=text)
-        except Exception as exc2:  # noqa: BLE001
-            log.exception("发送帮助失败: %s", exc2)
+        log.exception("发送帮助失败: %s", exc)
 
 
 def mentioned_bot(message) -> bool:
@@ -1970,102 +1908,6 @@ class MyClient(botpy.Client):
         except Exception as exc:  # noqa: BLE001
             log.exception("回复单聊消息失败: %s", exc)
 
-    # 帮助面板上的按钮被点击时触发
-    async def on_interaction_create(self, interaction):
-        """
-        按钮回调。
-
-        平台要求 3 秒内响应，否则用户侧没有任何反馈。
-        所以这里先立刻应答，真正的回复放到后台任务里做。
-        """
-        button_data = ""
-        try:
-            resolved = getattr(interaction.data, "resolved", None)
-            button_data = (getattr(resolved, "button_data", "") or "").strip()
-        except Exception:  # noqa: BLE001
-            button_data = ""
-
-        log.info(
-            "[按钮] data=%s group=%s",
-            button_data,
-            (getattr(interaction, "group_openid", "") or "")[:10],
-        )
-
-        # 先应答（必须在 3 秒内）
-        try:
-            await self.api.on_interaction_result(interaction.id, code=0)
-        except Exception as exc:  # noqa: BLE001
-            log.exception("应答按钮交互失败: %s", exc)
-            return
-
-        if not button_data:
-            return
-
-        group_openid = getattr(interaction, "group_openid", None)
-        if not group_openid:
-            return
-
-        # 后台执行真正的动作，避免拖慢应答
-        asyncio.create_task(self._handle_help_button(group_openid, button_data))
-
-    async def _handle_help_button(self, group_openid: str, command: str) -> None:
-        """帮助面板按钮的实际处理，回复到群里。"""
-        try:
-            if command == "/help":
-                await self.api.post_group_message(
-                    group_openid=group_openid,
-                    msg_type=0,
-                    content=HELP_TEXT,
-                    keyboard=build_help_keyboard(),
-                )
-                return
-
-            if command == "/ping":
-                await self.api.post_group_message(
-                    group_openid=group_openid, msg_type=0, content="pong 🏓"
-                )
-                return
-
-            if command == "/图库":
-                await self.api.post_group_message(
-                    group_openid=group_openid,
-                    msg_type=0,
-                    content=await build_gallery_list_text(1, group_openid),
-                )
-                return
-
-            if command == "/来只":
-                if not IMAGE_COOLDOWN_GUARD.allow(group_openid):
-                    log.info("[按钮] 取图触发限流")
-                    return
-                rec = await store.random_image(group_openid=group_openid)
-                if rec is None:
-                    await self.api.post_group_message(
-                        group_openid=group_openid,
-                        msg_type=0,
-                        content="图库还是空的，先引用一张图片并回复 /添加 关键词 存图吧。",
-                    )
-                    return
-                up = uploader_of(self.api)
-                file_info = await _upload_local_image(
-                    up,
-                    "group",
-                    group_openid,
-                    rec.abs_path,
-                    os.path.basename(rec.abs_path),
-                )
-                await self.api.post_group_message(
-                    group_openid=group_openid,
-                    msg_type=7,
-                    media={"file_info": file_info},
-                )
-                return
-        except UploadError as exc:
-            log.exception("[按钮] 上传图片失败: %s", exc)
-        except Exception as exc:  # noqa: BLE001
-            log.exception("[按钮] 处理失败: %s", exc)
-
-
 def main():
     # 安装原始事件拦截：用于读取「被引用图片」所在的 msg_elements
     install_raw_events()
@@ -2075,11 +1917,9 @@ def main():
 
     # public_messages      -> 群聊 + 单聊事件（GROUP_AND_C2C_EVENT, 1<<25）
     # public_guild_messages -> 频道 @机器人消息（AT_MESSAGE_CREATE, 1<<30）
-    # interaction          -> 消息按钮回调（INTERACTION_CREATE, 1<<26）
     intents = botpy.Intents(
         public_messages=True,
         public_guild_messages=True,
-        interaction=True,
     )
 
     client = MyClient(intents=intents)
