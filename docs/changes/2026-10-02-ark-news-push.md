@@ -1,0 +1,104 @@
+# 游戏公告推送：明日方舟 / 终末地（2026-10-02）
+
+## 需求
+
+给 bot 加一个推送**明日方舟**与**明日方舟：终末地**更新公告的功能：
+
+- 每个游戏的推送在群里**独立**开启/关闭
+- **默认关**，群里自定义开启
+- 活动预告、寻访、制作组通讯这类日常公告不打扰群，但可以随时手动查
+
+## 设计
+
+### 数据源（均已实测）
+
+| 游戏 | 来源 | 说明 |
+|---|---|---|
+| 明日方舟 | `GET https://ak.hypergryph.com/api/news?category=LATEST&page=N` | 官网 JSON API，字段 `cid/title/displayTime/brief/tab`，每页 6 条，拉前 2 页 |
+| 终末地 | `GET https://endfield.hypergryph.com/news` | 无公开 JSON API；官网是 Next.js SSR，公告数组（`bulletins`，字段与明日方舟基本一致）内嵌在 `self.__next_f.push` 数据块里，抓 HTML 用括号匹配提取（`extract_endfield_bulletins`） |
+
+国内直连，无需代理。终末地解析失败（官网改版）只影响该通道：记日志、下轮重试。
+
+### 开关模型
+
+`data/push.db`（SQLite，`push_store.py`）：
+
+- `push_groups(group_openid, game, enabled)`：每「群 × 游戏」一条开关记录，默认关
+- `seen_news(game, cid, ts)`：已见公告去重表，90 天过期清理——推送依据「没见过」而不是时间，进程重启也不会重推
+
+### 推送策略
+
+- 轮询默认 10 分钟一次（`QQ_BOT_NEWS_POLL_MINUTES`，0 = 只保留手动查询）
+- 只推标题命中 `QQ_BOT_NEWS_KEYWORDS`（默认 `更新|维护|停机|版本`）的新公告；同轮多条合并为一条消息
+- **首轮只标记已见不推送**——避免部署当天把历史公告轰炸进群
+- 每群每日主动推送上限 `QQ_BOT_NEWS_DAILY_LIMIT`（默认 6）只是防异常刷屏的保险丝（官方群主动消息频控是 60 条/分钟、1000 条/天/群，正常用量远达不到）
+- 推送失败记日志不重试；该条已标记已见，不会反复尝试
+- 发送走 `api.post_group_message(group_openid=..., content=...)` 不带 `msg_id`，即主动消息（botpy 1.2.1 的 `message.reply` 会自动带 `msg_id`，所以推送必须绕过 reply 直接调 API）
+
+### 指令（`/公告`）
+
+```
+/公告                       查看本群两游戏开关状态（私聊可用）
+/公告 开|关 明日方舟|终末地|全部   按群独立开关（仅群聊）
+/公告 查 [游戏]             实时拉最新 5 条（不过滤类型；每群 10 秒限流）
+/公告 <游戏>                等价 /公告 查 <游戏>
+```
+
+动作词兼容「/公告开启明日方舟」这类无空格写法；游戏别名见 `ark_news.GAMES`
+（舟/方舟/ak、终末地/ef/endfield 等）。
+
+## 改动文件
+
+- 新增 `ark_news.py`：抓取/解析/过滤/格式化/轮询/推送（与 bot 解耦，可独立测试）
+- 新增 `push_store.py`：开关 + 已见公告持久化
+- 新增 `_test_ark_news.py`：41 项检查
+- `bot.py`：import、`push_store = PushStore()` 实例、`ANNOUNCE_RE` 正则、
+  `do_announcement` 处理函数、`handle_command` 分支、`on_ready` 启动 `poll_loop`、
+  帮助文本加【公告】段、`/公告 查` 的 10 秒限流 guard
+- `.env.example` / `README.md` / 本记录：文档同步
+
+## 测试报告
+
+### 自动化（已全部通过）
+
+`_test_ark_news.py`，`.\.venv\Scripts\python.exe _test_ark_news.py`：
+
+- 终末地 SSR HTML 解析：含引号/括号/脏数据样本、无数据抛 `ValueError`
+- 关键词过滤：更新/维护命中，活动预告/通讯不命中；游戏别名 6 种写法
+- PushStore：开关幂等、两游戏独立、enabled_groups、filter_unseen 去重、mark_seen 幂等
+- 轮询推送（mock 数据源 + FakeAPI）：首轮不推、只推关键词命中的新公告、
+  带 openid/链接正确、不重推、两游戏各推各的群、每日上限保险丝
+- `/公告` 指令层（走真实 `handle_command`）：状态/开/关/重复开/缺参数/未知游戏/
+  全部/私聊拒绝/私聊提示/查指定/快捷查/查全部
+- `poll_loop` 在 `POLL_MINUTES=0` 时立即退出
+
+开发中抓到并修掉 3 个问题：`filter_unseen` 未去重、`/公告 <游戏>` 误入状态分支、
+`/公告 开` 空参数会被解析成「全部」（判空提前）。
+
+线上冒烟（真实网络走正式解析路径）：明日方舟 12 条、终末地 10 条，
+「闪断更新」「版本更新说明」被正确标记为关键更新。
+
+### 回归
+
+`_test_commands.py`、`_test_reply_policy.py`、`_test_links.py` 全部 exit 0。
+
+### 待人工测试（QQ 实环境）
+
+自动化覆盖不了真机行为，下次对话开始时提醒完成：
+
+- [ ] **主动推送打通**（最关键）：群里 `/公告 开 明日方舟` 后等一条新更新公告，
+  或临时把 `QQ_BOT_NEWS_POLL_MINUTES` 调小观察。确认不带 msg_id 的
+  `post_group_message` 在当前机器人认证状态下真的能发进群——若开放平台后台
+  未开通主动消息能力，会静默失败，看 `logs/bot.log` 的 `[公告] 已推送到群` /
+  `推送到群 ... 失败` 即可分辨
+- [ ] **终末地通道实弹**：`/公告 查 终末地` 在真机里发出（HTML 解析对线上页面
+  已冒烟通过，主要验证真机消息长度/排版）
+- [ ] 推送消息在 QQ 客户端里的**排版**（标题/时间/链接三行一条）是否可读
+- [ ] 部署到服务器后确认 `data/push.db` 在备份范围考量之内（当前 NutStore 备份
+  只含图库；push.db 丢了顶多重开一次开关+重推一条，可接受）
+
+## 备注
+
+- `/公告 查` 走实时网络（超时 20 秒），若官网抖动会给「拉取失败」文案，属预期
+- 明日方舟 API 的 `category=LATEST` 含公告/活动/新闻全部 tab，靠标题关键词过滤即可
+- 若日后想推活动公告，把 `QQ_BOT_NEWS_KEYWORDS` 放宽即可，代码无需改动

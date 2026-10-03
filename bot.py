@@ -24,6 +24,7 @@ import botpy
 from botpy.message import C2CMessage, GroupMessage
 from dotenv import load_dotenv
 
+import ark_news
 import help_image
 import persona
 import sensitive
@@ -35,6 +36,7 @@ from image_store import (
     make_card_sheet,
     make_contact_sheet,
 )
+from push_store import PushStore
 from raw_events import get_raw, install as install_raw_events
 from uploader import MediaUploader, UploadError
 
@@ -165,6 +167,9 @@ store = ImageStore()
 # 人格聊天的短期记忆（按会话隔离，默认每会话 100 条）
 chat = ChatStore()
 
+# 游戏公告推送：每群 × 每游戏独立开关 + 已见公告去重（默认全部关闭）
+push_store = PushStore()
+
 # ---------------------------------------------------------------------------
 # 图片上传结果（file_info）缓存
 #
@@ -231,6 +236,9 @@ HELP_TEXT = (
     "【名片】/添加名片 备注　引用图片后添加自己的游戏名片\n"
     "　　　　/游戏名片　把自己的名片拼成一张图发送\n"
     "　　　　/删除名片 备注|编号　或引用图片后 /删除名片\n"
+    "【公告】/公告　查看本群推送开关（默认关，每个游戏独立）\n"
+    "　　　　/公告 开|关 明日方舟|终末地|全部　版本更新推送\n"
+    "　　　　/公告 查 [游戏]　看最新公告（含活动类）\n"
     "\n"
     "快捷：只有「添加 / 删除 / 来只」可省略斜杠（添加、删除需引用图片），\n"
     "　　　其余指令必须带「/」。图库名不能是纯数字。\n"
@@ -296,6 +304,9 @@ LINK_RE = re.compile(r"^/关联\s*(.*)$", re.DOTALL)
 UNLINK_RE = re.compile(r"^/取消关联\s*(.*)$", re.DOTALL)
 FIND_LINK_RE = re.compile(r"^/查找关联\s*(.*)$", re.DOTALL)
 
+# 游戏公告推送开关 / 查询（必须带斜杠）：/公告 [开|关|查] [游戏]
+ANNOUNCE_RE = re.compile(r"^/公告\s*(.*)$", re.DOTALL)
+
 # 一次随机取图的候选数量上限（随机命中后只发一张）
 GALLERY_LIST_LIMIT = 30
 
@@ -312,6 +323,10 @@ BATCH_ADD_MAX = 5
 LAYER_WORDS = {"私有": "private", "公开": "public", "全部": "all"}
 
 IMAGE_COOLDOWN_GUARD = Cooldown(IMAGE_COOLDOWN)
+
+# /公告 查 的每群限流：查询走实时网络请求，防连点
+NEWS_QUERY_COOLDOWN = 10.0
+news_query_guard = Cooldown(NEWS_QUERY_COOLDOWN)
 
 
 # 提及有两种写法：QQ 原始 payload 里群成员是「<@openid>」，客户端显示成「@昵称」。
@@ -1266,6 +1281,121 @@ async def do_gallery(
     )
 
 
+# /公告 的动作词：按最长优先匹配，兼容「/公告 开 明日方舟」与「/公告开启明日方舟」
+_ANNOUNCE_ACTIONS = (
+    ("开启", "on"), ("关闭", "off"), ("查询", "latest"), ("状态", "status"),
+    ("开", "on"), ("关", "off"), ("查", "latest"),
+    ("on", "on"), ("off", "off"), ("latest", "latest"), ("status", "status"),
+)
+
+
+def _resolve_announce_targets(word: str) -> list[str] | None:
+    """把游戏参数解析成游戏 id 列表；认不出返回 None。"""
+    w = (word or "").strip()
+    if w in ("全部", "所有", "all", ""):
+        return list(ark_news.GAMES)
+    game = ark_news.resolve_game(w)
+    return [game] if game else None
+
+
+async def do_announcement(message, api, scope: str, scene_id: str, text: str) -> None:
+    """
+    处理「/公告」指令：
+
+      - /公告                       查看本群各游戏推送开关（默认全关）
+      - /公告 开|关 <游戏|全部>      开/关该游戏的更新推送（仅群聊；每群独立）
+      - /公告 查 [游戏]             被动拉最新公告（不过滤类型，网络查询）
+      - /公告 <游戏>                等价 /公告 查 <游戏>
+
+    开关按「群 × 游戏」独立存储在 push_store，默认关。
+    主动推送本体在 ark_news.poll_loop（on_ready 里启动），这里只管指令交互。
+    """
+    arg = (ANNOUNCE_RE.match(text).group(1) or "").strip()
+
+    action, rest = "", arg
+    lowered = arg.lower()
+    for word, canon in _ANNOUNCE_ACTIONS:
+        if lowered.startswith(word.lower()):
+            action, rest = canon, arg[len(word):].strip()
+            break
+
+    # 没写动作：带了游戏名 = 查（/公告 舟 等价 /公告 查 舟），空 = 看状态
+    if not action:
+        action = "latest" if rest.strip() else "status"
+
+    # 状态：展示开关
+    if action == "status":
+        states = await push_store.enabled_games(scene_id if scope == "group" else "")
+        lines = ["游戏更新推送（每群独立开关，默认关，只推版本更新/维护类公告）："]
+        for game, conf in ark_news.GAMES.items():
+            lines.append(f"· {conf['name']}：{'开' if states.get(game) else '关'}")
+        lines.append("开关：/公告 开|关 明日方舟|终末地|全部")
+        lines.append("查看最新：/公告 查 [游戏]")
+        if scope != "group":
+            lines.append("（推送开关只在群聊里生效；私聊可以随时 /公告 查）")
+        await message.reply(content="\n".join(lines))
+        return
+
+    # 开 / 关
+    if action in ("on", "off"):
+        if scope != "group":
+            await message.reply(content="推送开关是按群设置的，请在群聊里使用。")
+            return
+        words = split_keywords(rest)
+        word = words[0] if words else ""
+        if not word:
+            await message.reply(
+                content=f"用法：/公告 {'开' if action == 'on' else '关'} 明日方舟|终末地|全部"
+            )
+            return
+        targets = _resolve_announce_targets(word)
+        if not targets:
+            await message.reply(
+                content=f"没认出游戏「{word}」，可选：明日方舟 / 终末地 / 全部。"
+            )
+            return
+
+        state = "开" if action == "on" else "关"
+        parts = []
+        for game in targets:
+            changed = await push_store.set_enabled(scene_id, game, action == "on")
+            name = ark_news.GAMES[game]["name"]
+            parts.append(f"{name}：已{state}" if changed else f"{name}：本来就是{state}的")
+            log.info("[公告] 群 %s 推送%s %s", scene_id[:10], state, game)
+        await message.reply(content="；".join(parts))
+        return
+
+    # 查（含无动作直接给游戏名的快捷写法）
+    word = (split_keywords(rest) or [""])[0]
+    if word and word not in ("全部", "所有", "all"):
+        targets = _resolve_announce_targets(word)
+        if not targets:
+            await message.reply(
+                content=(
+                    f"没认出游戏「{word}」，可选：明日方舟 / 终末地 / 全部"
+                    "（不带游戏名默认查全部）。"
+                )
+            )
+            return
+    else:
+        targets = list(ark_news.GAMES)
+
+    if not news_query_guard.allow(scene_id):
+        await message.reply(content="查询太频繁了，稍等几秒再试。")
+        return
+
+    blocks = []
+    for game in targets:
+        try:
+            blocks.append(await ark_news.latest_text(game))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[公告] 查询%s失败：%s", ark_news.GAMES[game]["name"], exc)
+            blocks.append(
+                f"【{ark_news.GAMES[game]['name']}】拉取公告失败（{exc}），稍后再试。"
+            )
+    await message.reply(content="\n\n".join(blocks))
+
+
 async def do_admin_setup(message, text: str) -> None:
     """
     私聊专用：输入口令登记管理员。
@@ -1673,6 +1803,38 @@ def mentioned_bot(message) -> bool:
     return False
 
 
+_EVERYONE_MARKUP_RE = re.compile(r"<@!?\s*everyone\s*>", re.IGNORECASE)
+
+
+def mentions_everyone(message) -> bool:
+    """
+    这条消息是否 **@ 了全体成员**。
+
+    群主 @全体成员 时，@ 的不是机器人本体，但推送形态没有统一标准——
+    四种可能的样子全查一遍，宁可误杀不可漏放：
+
+      1. payload 里 mention_everyone 为真值（频道消息有此字段）
+      2. mentions[] 里带 everyone 条目（id / member_openid / username）
+      3. 原始 content 里是 <@!everyone> 之类的角括号标记
+         （normalize_incoming 会把它整个剥掉，必须趁原始形态还在时查）
+      4. 原始 content 里直接是「@全体成员」字面文本
+
+    命中即整条忽略，后面跟了指令也不响应：@全体成员 本来就是公告性质，
+    bot 不该插话，更不该把「只有 @ 没有正文」误判成 /help 刷帮助图。
+    """
+    raw = get_raw(message)
+    if str(raw.get("mention_everyone", "")).lower() in ("true", "1"):
+        return True
+    for item in raw.get("mentions") or []:
+        if not isinstance(item, dict):
+            continue
+        ident = str(item.get("id") or item.get("member_openid") or "").strip().lower()
+        if ident == "everyone" or "全体成员" in str(item.get("username") or ""):
+            return True
+    raw_content = getattr(message, "content", "") or ""
+    return bool(_EVERYONE_MARKUP_RE.search(raw_content) or "@全体成员" in raw_content)
+
+
 async def persona_reply(message, scope: str, content: str) -> None:
     """
     人格聊天：把非指令文本交给角色模型，并维护该会话的上下文。
@@ -1834,6 +1996,11 @@ async def handle_command(message, api, scope: str, scene_id: str, content: str) 
         )
         return True
 
+    # 游戏公告：开关 / 查询
+    if ANNOUNCE_RE.match(text):
+        await do_announcement(message, api, scope, scene_id, text)
+        return True
+
     return False
 
 
@@ -1844,6 +2011,7 @@ class MyClient(botpy.Client):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._watchdog_task: asyncio.Task | None = None
+        self._news_task: asyncio.Task | None = None
 
     async def on_ready(self):
         log.info("机器人「%s」已上线", self.robot.name)
@@ -1854,11 +2022,22 @@ class MyClient(botpy.Client):
             self._watchdog_task = asyncio.create_task(
                 watchdog.watch(WATCHDOG_IDLE_TIMEOUT)
             )
+        # 公告轮询同理：事件循环已运行才能 create_task。
+        # 未配置推送间隔（QQ_BOT_NEWS_POLL_MINUTES=0）时 poll_loop 会自己退出。
+        if self._news_task is None or self._news_task.done():
+            self._news_task = asyncio.create_task(
+                ark_news.poll_loop(self.api, push_store)
+            )
 
     # 群里被 @ 时触发
     async def on_group_at_message_create(self, message: GroupMessage):
         if dedup.seen(f"at:{message.id}"):
             log.warning("重复事件已忽略: %s", message.id)
+            return
+
+        # @全体成员的消息一律不响应（防止「只有@没有正文」被当成 /help）
+        if mentions_everyone(message):
+            log.info("[群@] @全体成员消息，已忽略")
             return
 
         content = normalize_incoming(message.content)
@@ -1893,6 +2072,11 @@ class MyClient(botpy.Client):
     # 「可选的全量响应」，而是群里 @ 机器人能不能用指令的关键。
     async def on_group_message_create(self, message: GroupMessage):
         if dedup.seen(f"all:{message.id}"):
+            return
+
+        # @全体成员的消息一律不响应（指令、人格聊天、关键词全跳过）
+        if mentions_everyone(message):
+            log.info("[群全量] @全体成员消息，已忽略")
             return
 
         content = normalize_incoming(message.content)

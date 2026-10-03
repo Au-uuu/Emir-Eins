@@ -5,6 +5,7 @@
   - 认不出的指令（非指令内容）直接无视，不回复
   - 只有 @ 没有任何内容 → 视为 /help
   - 单聊同样：空内容 → /help，非指令内容 → 无视
+  - @全体成员的消息一律不响应（四种 payload 形态都测），后面跟指令也不理
 """
 
 import asyncio
@@ -85,6 +86,9 @@ async def main() -> int:
 
     async def group_at(m):
         await bot.MyClient.on_group_at_message_create(client, m)
+
+    async def group_all(m):
+        await bot.MyClient.on_group_message_create(client, m)
 
     async def c2c(m):
         await bot.MyClient.on_c2c_message_create(client, m)
@@ -181,6 +185,56 @@ async def main() -> int:
     src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot.py"), encoding="utf-8").read()
     check("无『收到：』字面量", "收到：" not in src)
     check("无『你好，我是机器人』", "你好，我是机器人" not in src)
+
+    print("\n[12] 群@：@全体成员、无正文（mentions 带 everyone 条目）→ 不回帮助")
+    import raw_events
+
+    m = FakeMessage("", scope="group")
+    raw_events._remember(
+        m.id,
+        {
+            "d": {
+                "mentions": [
+                    {"id": "everyone", "username": "全体成员", "bot": False}
+                ]
+            }
+        },
+    )
+    await group_at(m)
+    check("没有任何回复", m.replies == [], str(m.replies))
+
+    print("\n[13] 群@：正文是「@全体成员 /ping」字面文本 → 整条忽略")
+    m = FakeMessage("@全体成员 /ping", scope="group")
+    await group_at(m)
+    check("没有回 pong 也没有其他回复", m.replies == [], str(m.replies))
+
+    print("\n[14] 群全量：mention_everyone=true 且带 /ping → 忽略")
+    m = FakeMessage("/ping", scope="group")
+    raw_events._remember(m.id, {"d": {"mention_everyone": "true"}})
+    await group_all(m)
+    check("没有任何回复", m.replies == [], str(m.replies))
+
+    print("\n[15] 群全量：content 带 <@!everyone> 标记 → 忽略（标记剥掉后剩 /ping 也不理）")
+    m = FakeMessage("<@!everyone> /ping", scope="group")
+    await group_all(m)
+    check("没有任何回复", m.replies == [], str(m.replies))
+
+    print("\n[16] 群全量：普通 /ping（无全体成员）→ 正常回复（防误杀回归）")
+    m = FakeMessage("/ping", scope="group")
+    await group_all(m)
+    check("回复 pong", m.text == "pong 🏓", m.text)
+
+    print("\n[17] 群@：正文普通地提到「全体成员」四个字但不 @ → 不受影响")
+    m = FakeMessage("大家看看全体成员列表", scope="group")
+    await group_at(m)
+    check("没有回复（本就不响应非指令）", m.replies == [], str(m.replies))
+    m2 = FakeMessage("/ping", scope="group")
+    raw_events._remember(
+        m2.id,
+        {"d": {"mentions": [{"is_you": True, "bot": True}]}},
+    )
+    await group_at(m2)
+    check("被 @bot 的 /ping 仍正常", m2.text == "pong 🏓", m2.text)
 
     print(f"\n{'=' * 50}")
     print(f"失败 {failures} 项")

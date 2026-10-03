@@ -60,14 +60,23 @@ else
 fi
 
 cd "$SRC_DIR"
-for item in bot.py image_store.py uploader.py raw_events.py watchdog.py \
-            requirements.txt .env README.md smoke_test.py; do
+# 运行时代码：所有 *.py 一把抓（清单写死容易在加新模块时漏掉，导致服务器起不来）
+for item in *.py requirements.txt README.md smoke_test.py; do
     if [[ -e "$item" ]]; then
         cp -f "$item" "$APP_DIR/"
     else
         warn "缺少文件：$item"
     fi
 done
+# 人设卡（人格聊天用）
+if [[ -d persona ]]; then
+    mkdir -p "$APP_DIR/persona"
+    cp -f persona/* "$APP_DIR/persona/" 2>/dev/null || true
+fi
+
+# .env 是凭据与运维参数，服务器上的值（如 IDLE_TIMEOUT）可能与本地不同，
+# 只在缺失时初始化，不覆盖
+[[ -f "$APP_DIR/.env" ]] || cp -f .env "$APP_DIR/" 2>/dev/null || true
 
 # 复制后再统一一次换行符，避免 CRLF 引起各种诡异问题
 find "$APP_DIR" -maxdepth 1 -type f \( -name '*.py' -o -name '.env' \) \
@@ -91,10 +100,7 @@ if [[ $KEEP_DATA -eq 0 && -d "$SRC_DIR/data" ]]; then
 fi
 
 # 测试脚本（可选，但保留便于排查）
-for f in _test_store.py _test_commands.py _test_links.py _test_delete.py \
-         _test_gallery.py _test_admin.py _test_reply_policy.py \
-         _test_privacy.py _test_add.py _test_layers.py _test_thumb.py \
-         _test_cards.py; do
+for f in _test_*.py; do
     [[ -e "$SRC_DIR/$f" ]] && cp -f "$SRC_DIR/$f" "$APP_DIR/" || true
 done
 
