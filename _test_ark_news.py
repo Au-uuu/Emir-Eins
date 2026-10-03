@@ -5,7 +5,8 @@
   - 终末地官网 SSR HTML 能离线解析出公告列表（含引号/括号等复杂字符）
   - 只有标题命中关键词的公告才主动推送；/公告 查 不过滤类型
   - 每个群 × 每个游戏独立开关，默认关
-  - 首轮轮询只把既有公告标记为已见、不推送；之后只推新公告
+  - 首次初始化（该游戏 seen 表为空）只把既有公告标记为已见、不推送；之后只推新公告。
+    判定依据是**持久化的 seen 表**而不是「本进程第一轮」，所以重启不会吞掉公告
   - 每群每日推送上限保险丝生效
   - /公告 的开关 / 状态 / 查 / 错误参数 / 私聊限制
 """
@@ -116,10 +117,19 @@ def test_endfield_extraction():
 # ---------------------------------------------------------------------------
 def test_filter_and_aliases():
     print("[2] 关键词过滤与游戏别名")
+    # 关键词来自环境变量（每次调用都读，无缓存）。**显式钉死**成默认值，
+    # 否则这条会跟着服务器 .env 走——在服务器上就跑出过 2 项失败。
+    os.environ["QQ_BOT_NEWS_KEYWORDS"] = "更新|维护|停机|版本"
     check("更新公告命中", ark_news.is_update_news("[明日方舟]09月29日16:00闪断更新公告"))
     check("维护公告命中", ark_news.is_update_news("【维护公告】10月10日更新维护"))
-    check("活动预告不命中", not ark_news.is_update_news("[活动预告]矢量突破#3「拟生态」限时活动即将开启"))
+    check("活动预告不命中（默认关键词）", not ark_news.is_update_news("[活动预告]矢量突破#3「拟生态」限时活动即将开启"))
     check("制作组通讯不命中", not ark_news.is_update_news("《明日方舟》制作组通讯#69期"))
+
+    # 线上 .env 把「活动预告」也加进了关键词，验证放宽后确实会命中
+    os.environ["QQ_BOT_NEWS_KEYWORDS"] = "更新|维护|停机|版本|活动预告"
+    check("放宽后活动预告命中", ark_news.is_update_news("[活动预告]矢量突破#3「拟生态」限时活动即将开启"))
+    check("放宽后制作组通讯仍不命中", not ark_news.is_update_news("《明日方舟》制作组通讯#69期"))
+    os.environ.pop("QQ_BOT_NEWS_KEYWORDS", None)
 
     check("明日方舟别名", ark_news.resolve_game("明日方舟") == "ak")
     check("舟 别名", ark_news.resolve_game("舟") == "ak")
@@ -176,19 +186,25 @@ def fake_fetch_factory(items_by_game: dict):
 
 def test_poll_once():
     print("[4] 轮询推送")
+    # 同样钉死关键词，避免跟着 .env 变
+    os.environ["QQ_BOT_NEWS_KEYWORDS"] = "更新|维护|停机|版本"
     db = os.path.join(TEST_DIR, "poll.db")
     os.makedirs(TEST_DIR, exist_ok=True)
     if os.path.exists(db):
         os.remove(db)
     ps = PushStore(db_path=db)
+    # 首次初始化的判定依据是「该游戏 seen 表是否为空」（持久化），不是进程第一轮：
+    # 这样重启后不会把重启期间的新公告静默标记为已见
+    check("初始化前 has_seen 为假", asyncio.run(ps.has_seen("ak")) is False)
     # 首轮：线上只有旧公告
     ark_news.fetch_game = fake_fetch_factory({"ak": [AK_OLD], "endfield": [EF_NEW]})
 
     # 首轮：只标记已见，不推送
     api = FakeAPI()
-    asyncio.run(ark_news.poll_once(None, api, ps, first_round=True))
-    check("首轮不推送", api.sent == [])
-    check("首轮全部标记已见", asyncio.run(ps.filter_unseen("ak", ["1"])) == [])
+    asyncio.run(ark_news.poll_once(None, api, ps))
+    check("首次初始化不推送", api.sent == [])
+    check("既有公告全部标记已见", asyncio.run(ps.filter_unseen("ak", ["1"])) == [])
+    check("初始化后 has_seen 为真", asyncio.run(ps.has_seen("ak")) is True)
 
     # 群开启 ak（endfield 不开）→ 第二轮冒出更新公告和活动公告，只推前者
     asyncio.run(ps.set_enabled("G1", "ak", True))
@@ -196,7 +212,7 @@ def test_poll_once():
         {"ak": [AK_OLD, AK_NEW, AK_NEW_EVENT], "endfield": [EF_NEW]}
     )
     api = FakeAPI()
-    asyncio.run(ark_news.poll_once(None, api, ps, first_round=False))
+    asyncio.run(ark_news.poll_once(None, api, ps))
     check("只推 1 条", len(api.sent) == 1, str(len(api.sent)))
     if api.sent:
         content = api.sent[0]["content"]
@@ -207,7 +223,7 @@ def test_poll_once():
 
     # 同一条公告不重推
     api2 = FakeAPI()
-    asyncio.run(ark_news.poll_once(None, api2, ps, first_round=False))
+    asyncio.run(ark_news.poll_once(None, api2, ps))
     check("已见公告不重推", api2.sent == [])
 
     # endfield 独立开关：G2 只开终末地，G1 只开 ak，各收各的
@@ -215,7 +231,7 @@ def test_poll_once():
     ef_new2 = ark_news.NewsItem("endfield", "10", "版本停机维护公告", 1790300000, "notices", "")
     ark_news.fetch_game = fake_fetch_factory({"ak": [], "endfield": [EF_NEW, ef_new2]})
     api3 = FakeAPI()
-    asyncio.run(ark_news.poll_once(None, api3, ps, first_round=False))
+    asyncio.run(ark_news.poll_once(None, api3, ps))
     check("终末地推 1 条到 G2", len(api3.sent) == 1 and api3.sent[0]["group_openid"] == "G2")
 
     # 每日上限保险丝
@@ -225,9 +241,22 @@ def test_poll_once():
     ef_new3 = ark_news.NewsItem("endfield", "11", "版本更新公告", 1790400000, "notices", "")
     ark_news.fetch_game = fake_fetch_factory({"ak": [], "endfield": [ef_new3]})
     api4 = FakeAPI()
-    asyncio.run(ark_news.poll_once(None, api4, ps, first_round=False))
+    asyncio.run(ark_news.poll_once(None, api4, ps))
     check("达到每日上限后跳过", api4.sent == [])
     ark_news._daily_pushed.clear()
+
+    # 放宽关键词（线上 .env 的配置）后，活动预告也应该推出来
+    os.environ["QQ_BOT_NEWS_KEYWORDS"] = "更新|维护|停机|版本|活动预告"
+    event4 = ark_news.NewsItem("ak", "4", "[活动预告]新限时活动", 1790500000, "1", "")
+    ark_news.fetch_game = fake_fetch_factory({"ak": [AK_OLD, event4], "endfield": []})
+    api5 = FakeAPI()
+    asyncio.run(ark_news.poll_once(None, api5, ps))
+    check(
+        "放宽关键词后活动预告也推给已开的群",
+        len(api5.sent) == 1 and "活动预告" in api5.sent[0]["content"],
+        str(len(api5.sent)),
+    )
+    os.environ.pop("QQ_BOT_NEWS_KEYWORDS", None)
 
 
 # ---------------------------------------------------------------------------

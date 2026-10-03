@@ -314,22 +314,18 @@ async def poll_loop(api, pstore) -> None:
         minutes,
         _keywords_pattern().pattern,
     )
-    first_round = True
     async with aiohttp.ClientSession(timeout=_TIMEOUT, headers=_HEADERS) as session:
         while True:
             try:
-                await poll_once(session, api, pstore, first_round=first_round)
+                await poll_once(session, api, pstore)
             except Exception:  # noqa: BLE001
                 # 单个游戏拉取失败在 poll_once 里已记日志；这里兜住其余意外，
                 # 保证轮询循环永不退出
                 log.exception("[公告] 本轮轮询异常")
-            first_round = False
             await asyncio.sleep(minutes * 60)
 
 
-async def poll_once(
-    session: aiohttp.ClientSession, api, pstore, first_round: bool
-) -> None:
+async def poll_once(session: aiohttp.ClientSession, api, pstore) -> None:
     """拉全部游戏 → 找出新公告 → 关键更新推给开启的群。"""
     for game in GAMES:
         try:
@@ -343,13 +339,19 @@ async def poll_once(
         if not unseen:
             continue
 
+        # 「首次初始化」只看该游戏**是否已有任何已见记录**，不看是不是本进程第一轮。
+        # 必须在 mark_seen 之前查（mark 完表就不空了）。
+        # 老实现用进程级 first_round，导致每次重启后的第一轮会把重启期间出现的新公告
+        # 静默标记为已见、永不推送——而部署代码就要重启，必然踩到。
+        first_time = not await pstore.has_seen(game)
+
         unseen_set = set(unseen)
         fresh = [it for it in items if it.cid in unseen_set]
         await pstore.mark_seen(game, unseen)
 
-        if first_round:
+        if first_time:
             log.info(
-                "[公告] 首轮%s：标记 %d 条既有公告为已见，不推送",
+                "[公告] %s 首次初始化：标记 %d 条既有公告为已见，不推送",
                 GAMES[game]["name"],
                 len(unseen),
             )

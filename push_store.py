@@ -88,7 +88,23 @@ class PushStore:
         """记录这些 cid 为已见（幂等），顺手清理超过保留期的旧记录。"""
         await asyncio.to_thread(self._mark_seen_sync, game, cids)
 
+    async def has_seen(self, game: str) -> bool:
+        """该游戏是否已有任何已见记录。
+
+        用来区分「**真正的首次初始化**」与「进程刚重启」：只有前者才该只标记不推送。
+        旧实现用「本进程第一轮」判断，导致每次重启都会把重启期间的新公告静默标记为
+        已见、永不推送（部署重启就会踩）。
+        """
+        return await asyncio.to_thread(self._has_seen_sync, game)
+
     # ---------------- 同步实现 ----------------
+
+    def _has_seen_sync(self, game: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM seen_news WHERE game = ? LIMIT 1", (game,)
+            ).fetchone()
+        return row is not None
 
     def _set_enabled_sync(self, group_openid: str, game: str, flag: int) -> bool:
         with self._connect() as conn:

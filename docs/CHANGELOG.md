@@ -32,6 +32,7 @@
 | 2026-10-02 | `/help` 改为发送图片（带背景图、JPEG 压缩）；移除从未生效的帮助按钮；file_info 缓存把上传 2 秒降到 0 | [help-image](changes/2026-10-02-help-image.md) |
 | 2026-10-02 | 游戏公告推送：`/公告` 开关/查询 + 轮询推送明日方舟/终末地更新公告（每群×每游戏独立，默认关） | [ark-news-push](changes/2026-10-02-ark-news-push.md) |
 | 2026-10-04 | @全体成员的消息一律不响应（防「空正文」误判成 `/help` 刷帮助图） | [ignore-at-everyone](changes/2026-10-04-ignore-at-everyone.md) |
+| 2026-10-04 | 公告推送：修复重启会吞公告的隐患（首轮判定改用持久化 seen 表）+ 关键词放宽到含「活动预告」 | [ark-news-push](changes/2026-10-02-ark-news-push.md) |
 
 ## 约定
 
