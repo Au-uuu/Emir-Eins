@@ -158,19 +158,23 @@ crontab -e
 
 ### 更新代码
 
-本地改完代码后重新上传：
+**日常改动请走一键脚本**，细节见 [DEPLOY-UPDATE.md](DEPLOY-UPDATE.md)：
 
 ```powershell
-scp qqbot\bot.py root@<SERVER_IP>:/opt/qqbot/
+cd C:\DSH\qqbot
+powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\upload.ps1
 ```
 
-然后在服务器上：
+它会：上传所有 `*.py` 与 `persona/` → 在服务器上备份旧文件 → 覆盖安装 →
+**逐个比对 SHA256**（确认线上就是本地这一份）→ 跑全部测试套件 → 重启 → 打印启动日志。
 
-```bash
-systemctl restart qqbot
+手改单个文件时也可以直接 scp（然后重启）：
+
+```powershell
+scp -i C:\DSH\.keys\qqbot-tencent.pem qqbot\bot.py ubuntu@<SERVER_IP>:/tmp/ ; ssh -i C:\DSH\.keys\qqbot-tencent.pem ubuntu@<SERVER_IP> "sudo cp /tmp/bot.py /opt/qqbot/ && sudo systemctl restart qqbot"
 ```
 
-`data/` 图片库不会被覆盖。
+`data/` 图片库与服务器上的 `.env` **都不会被覆盖**（上传只动代码与人设卡）。
 
 ---
 

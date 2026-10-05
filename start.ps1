@@ -1,4 +1,4 @@
-# 启动机器人（Windows）
+﻿# 启动机器人（Windows）
 # 用法：右键“使用 PowerShell 运行”，或在终端执行  .\start.ps1
 
 $ErrorActionPreference = "Stop"

@@ -3,6 +3,7 @@
 不需要真的调模型 —— 用假的 generate() 替换掉 persona.generate。
 """
 import asyncio
+import base64
 import os
 import sys
 import tempfile
@@ -235,6 +236,151 @@ async def main() -> int:
     m3 = GroupFakeMessage("222")
     await group_all(m3)
     check("普通群消息（无 mentions）→ 不回复", m3.replies == [], str(m3.replies))
+
+    # ---------------- 5. 看图链路 ----------------
+    print("\n[5] 看图：带图消息走视觉模型，图不可用自动退回旧行为")
+
+    # content 构造：纯文本 vs 多模态
+    check("纯文本 content 保持字符串", persona._user_content("你好", []) == "你好")
+    parts = persona._user_content("看看", [("image/png", b"png")])
+    check("带图 content 是数组", isinstance(parts, list) and len(parts) == 2, str(type(parts)))
+    check("图片在文字前", parts[0]["type"] == "image_url" and parts[1]["type"] == "text")
+    check(
+        "data URI 形态正确",
+        parts[0]["image_url"]["url"].startswith("data:image/png;base64,"),
+    )
+
+    # 视觉模型配置
+    check("视觉模型默认 qwen3-vl-flash", persona.vl_model() == "qwen3-vl-flash")
+    persona.available = lambda: True
+    old_vl = os.environ.get("QQ_BOT_QWEN_VL_MODEL")
+    os.environ["QQ_BOT_QWEN_VL_MODEL"] = "qwen3-vl-flash"
+    check("默认开启看图", persona.vision_enabled() is True)
+    os.environ["QQ_BOT_QWEN_VL_MODEL"] = "off"
+    check("设为 off 可关闭看图", persona.vision_enabled() is False)
+    if old_vl is None:
+        os.environ.pop("QQ_BOT_QWEN_VL_MODEL", None)
+    else:
+        os.environ["QQ_BOT_QWEN_VL_MODEL"] = old_vl
+
+    class ImgMessage(FakeMessage):
+        def __init__(self, content: str = "", atts=None):
+            super().__init__(content)
+            self.attachments = list(atts or [])
+
+    def make_att(ct="image/png", url="http://img/a.png"):
+        return types.SimpleNamespace(content_type=ct, filename="a.png", url=url)
+
+    PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"fake-png-bytes"
+    GIF_BYTES = base64.b64decode(
+        "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+    )
+
+    async def png_download(url):
+        return PNG_BYTES
+
+    seen = {}
+
+    async def fake_vision(history, text, images):
+        seen["history"], seen["text"], seen["images"] = history, text, images
+        return "【看图】我看到了"
+
+    async def fail_generate(history, text):
+        raise AssertionError("带图消息不该走纯文本模型")
+
+    persona.available = lambda: True
+    persona.vision_enabled = lambda: True
+    persona.generate = fail_generate
+    persona.generate_vision = fake_vision
+    bot.store.download = png_download
+
+    m = ImgMessage("这张图是什么", [make_att()])
+    await bot.persona_reply(m, "group:V1", "这张图是什么")
+    check("带图文字消息 → 视觉模型回复", "看到" in m.text, m.text)
+    check(
+        "图片传给了模型",
+        len(seen.get("images", [])) == 1 and seen["images"][0][0] == "image/png",
+    )
+    check("文字一并传给模型", seen.get("text") == "这张图是什么")
+    check("上下文照常记录", len(await bot.chat.history("group:V1")) == 2)
+
+    m = ImgMessage("", [make_att()])
+    await bot.persona_reply(m, "c2c:V2", bot.IMAGE_ONLY_PLACEHOLDER)
+    check("只发图片也能收到看图回复", "看到" in m.text, m.text)
+    h = await bot.chat.history("c2c:V2")
+    check(
+        "占位文本照旧记进上下文",
+        len(h) == 2 and h[0]["content"] == bot.IMAGE_ONLY_PLACEHOLDER,
+        str(h),
+    )
+
+    async def none_vision(history, text, images):
+        return None
+
+    persona.generate_vision = none_vision
+    m = ImgMessage("", [make_att()])
+    await bot.persona_reply(m, "c2c:V3", bot.IMAGE_ONLY_PLACEHOLDER)
+    check("视觉模型失败 → 不回复", m.replies == [])
+    h = await bot.chat.history("c2c:V3")
+    check(
+        "视觉模型失败 → 占位仍记进上下文",
+        len(h) == 1 and h[0]["content"] == bot.IMAGE_ONLY_PLACEHOLDER,
+    )
+
+    persona.vision_enabled = lambda: False
+    m = ImgMessage("", [make_att()])
+    await bot.persona_reply(m, "c2c:V4", bot.IMAGE_ONLY_PLACEHOLDER)
+    check("未开看图 → 不回复", m.replies == [])
+    h = await bot.chat.history("c2c:V4")
+    check("未开看图 → 记占位（旧行为）", len(h) == 1 and h[0]["content"] == bot.IMAGE_ONLY_PLACEHOLDER)
+    persona.vision_enabled = lambda: True
+
+    async def bad_download(url):
+        raise OSError("下载失败")
+
+    bot.store.download = bad_download
+    m = ImgMessage("", [make_att()])
+    await bot.persona_reply(m, "c2c:V5", bot.IMAGE_ONLY_PLACEHOLDER)
+    check("图片下载失败 → 不回复", m.replies == [])
+    h = await bot.chat.history("c2c:V5")
+    check("图片下载失败 → 记占位", len(h) == 1 and h[0]["content"] == bot.IMAGE_ONLY_PLACEHOLDER)
+    bot.store.download = png_download
+
+    imgs = await bot.collect_vision_images(
+        ImgMessage("", [make_att(ct="image/gif")])
+    )
+    check(
+        "GIF 只取首帧并转 PNG",
+        len(imgs) == 1 and imgs[0][0] == "image/png" and imgs[0][1][:4] == b"\x89PNG",
+    )
+
+    imgs = await bot.collect_vision_images(
+        ImgMessage("", [make_att(url=f"http://img/{i}.png") for i in range(5)])
+    )
+    check("一次最多喂 3 张", len(imgs) == 3, f"n={len(imgs)}")
+
+    persona.generate_vision = fake_vision
+    m = GroupFakeMessage(
+        "",
+        mentions=[{"is_you": True, "bot": True, "username": "依蜜尔爱因-测试中"}],
+    )
+    m.attachments = [make_att()]
+    await group_all(m)
+    check("群@只发图 → 看图回复而不是 /help", len(m.replies) == 1 and "看到" in m.text, str(m.replies))
+
+    persona.vision_enabled = lambda: False
+    m = GroupFakeMessage(
+        "",
+        mentions=[{"is_you": True, "bot": True, "username": "依蜜尔爱因-测试中"}],
+    )
+    m.attachments = [make_att()]
+    await group_all(m)
+    check(
+        "群@只发图 + 未开看图 → 维持 /help",
+        len(m.replies) == 1 and "群助手" in m.text,
+        str(m.replies)[:60],
+    )
+    persona.vision_enabled = lambda: True
 
     print(f"\n{'=' * 50}")
     print(f"失败 {failures} 项")

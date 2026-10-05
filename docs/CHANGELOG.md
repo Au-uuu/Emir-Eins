@@ -33,6 +33,8 @@
 | 2026-10-02 | 游戏公告推送：`/公告` 开关/查询 + 轮询推送明日方舟/终末地更新公告（每群×每游戏独立，默认关） | [ark-news-push](changes/2026-10-02-ark-news-push.md) |
 | 2026-10-04 | @全体成员的消息一律不响应（防「空正文」误判成 `/help` 刷帮助图） | [ignore-at-everyone](changes/2026-10-04-ignore-at-everyone.md) |
 | 2026-10-04 | 公告推送：修复重启会吞公告的隐患（首轮判定改用持久化 seen 表）+ 关键词放宽到含「活动预告」 | [ark-news-push](changes/2026-10-02-ark-news-push.md) |
+| 2026-10-04 | 架构调研落地：群消息前置抽取、@全体成员真实 payload 形态、公告推送配额认知修正（22009 识别） | [arch-review-optimizations](changes/2026-10-04-arch-review-optimizations.md) |
+| 2026-10-05 | 人格聊天看图：带图消息切换 `qwen3-vl-flash`（同角色卡同历史），单聊发图会回复；隐私协议同步改写 | [persona-vision](changes/2026-10-05-persona-vision.md) |
 
 ## 约定
 

@@ -79,3 +79,19 @@
   真实形态补进 `mentions_everyone()`。
 - 用户 2026-10-04 已在群里发过一条 @全体成员（当时线上还是旧代码），
   下次对话先确认当时机器人是否响应了、响应了什么。
+
+## 同日修正：真实 payload 形态
+
+当天下午的架构调研（读了 nonebot/adapter-qq 对新版群消息 payload 的建模，
+[models/qq.py](https://github.com/nonebot/adapter-qq/blob/master/nonebot/adapters/qq/models/qq.py)）
+拿到了 @全体成员 的实锤格式，与上文的推断形态有出入，已补进判定：
+
+| 形态 | 上文推断 | 实锤（adapter-qq） | 处理 |
+|---|---|---|---|
+| mentions 条目 | `id == "everyone"` | `{scope: "all", is_you: true, username}`，**没有** id 字段 | 新增 `scope == "all"` 判定（保留旧判定兜底） |
+| content 内联标记 | `<@!everyone>` | `<qqbot-at-everyone />` | 正则改为两者都匹配（外加频道风格 `<@all>`） |
+
+补充要点：实锤条目同样带 `is_you: true`，所以 `mentions_everyone()` 必须先于
+`mentioned_bot()` 判定执行（现在两个入口都在 `group_preamble()` 里最先做守卫）。
+
+新增用例 `[18]` scope:"all"、`[19]` `<qqbot-at-everyone />`、`[20]` `<@all>`，全套 20 项通过。

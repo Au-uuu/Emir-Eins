@@ -8,14 +8,22 @@ OpenAI 兼容接口，用标准库 `urllib` 就能调，**不引入新依赖**�
 
 角色卡
 ------
-`persona/依蜜尔爱因.md`，整份作为 system prompt 传给模型。
+`persona/依蜜尔爱因.md`，整份作为 system prompt 传给模型。纯文本和带图
+两条链路用的是**同一张卡**，人设不因换模型而变。
+
+看图
+----
+`qwen-flash-character` 是纯文本模型，用户发图时改调视觉模型
+（`QQ_BOT_QWEN_VL_MODEL`，默认 `qwen3-vl-flash`）：图片转 base64 data URI
+放进 OpenAI 多模态 content，角色卡与历史照传。设为 `off` 可整体关闭看图。
 
 配置（.env）
 ------------
 | 变量 | 说明 |
 |---|---|
 | `QQ_BOT_QWEN_KEY` | DashScope API Key。**留空则人格聊天整体关闭** |
-| `QQ_BOT_QWEN_MODEL` | 默认 `qwen-flash-character` |
+| `QQ_BOT_QWEN_MODEL` | 默认 `qwen-flash-character`（纯文本链路） |
+| `QQ_BOT_QWEN_VL_MODEL` | 带图消息用的视觉模型，默认 `qwen3-vl-flash`，`off` 关闭 |
 | `QQ_BOT_QWEN_URL` | 默认 DashScope 的 OpenAI 兼容端点 |
 | `QQ_BOT_PERSONA_FILE` | 角色卡路径，默认 `persona/依蜜尔爱因.md` |
 | `QQ_BOT_CHAT_TIMEOUT` | 单次请求超时秒数，默认 20 |
@@ -31,6 +39,7 @@ OpenAI 兼容接口，用标准库 `urllib` 就能调，**不引入新依赖**�
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -61,6 +70,19 @@ def api_key() -> str:
 
 def model() -> str:
     return _env("QQ_BOT_QWEN_MODEL") or "qwen-flash-character"
+
+
+def vl_model() -> str:
+    return _env("QQ_BOT_QWEN_VL_MODEL") or "qwen3-vl-flash"
+
+
+# 关掉看图的写法：QQ_BOT_QWEN_VL_MODEL=off（大小写均可）
+_VL_OFF = {"off", "none", "0", "false"}
+
+
+def vision_enabled() -> bool:
+    """带图消息走视觉模型的前提：人格聊天可用且视觉模型没被显式关掉。"""
+    return available() and vl_model().lower() not in _VL_OFF
 
 
 def api_url() -> str:
@@ -134,15 +156,64 @@ async def generate(history: list[dict], text: str) -> str | None:
         return None
 
 
+async def generate_vision(
+    history: list[dict], text: str, images: list[tuple[str, bytes]]
+) -> str | None:
+    """
+    带图消息走视觉模型。images 是 (mime, bytes) 列表，至少一张。
+
+    人设与纯文本链路完全一致：同一张角色卡、同一段历史、同样的静默策略，
+    唯一的区别是模型名和 content 里多了图片。text 允许为空（只发图）。
+    """
+    if not images:
+        return None
+    prompt = load_prompt()
+    key = api_key()
+    if not prompt or not key:
+        return None
+    try:
+        return await asyncio.to_thread(
+            _request_sync, prompt, key, history, (text or "").strip(), list(images)
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("视觉模型调用失败，本轮静默：%s", exc)
+        return None
+
+
+def _user_content(text: str, images: list[tuple[str, bytes]]) -> str | list:
+    """
+    纯文本消息 content 用字符串；带图消息用 OpenAI 多模态数组：
+    图片在前（base64 data URI），文字在后。
+    """
+    if not images:
+        return text
+    parts: list[dict] = [
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+            },
+        }
+        for mime, data in images
+    ]
+    if text:
+        parts.append({"type": "text", "text": text})
+    return parts
+
+
 def _request_sync(
-    prompt: str, key: str, history: list[dict], text: str
+    prompt: str,
+    key: str,
+    history: list[dict],
+    text: str,
+    images: list[tuple[str, bytes]] | None = None,
 ) -> str | None:
     messages = [{"role": "system", "content": prompt}]
     messages.extend(history)
-    messages.append({"role": "user", "content": text})
+    messages.append({"role": "user", "content": _user_content(text, images or [])})
 
     payload = {
-        "model": model(),
+        "model": vl_model() if images else model(),
         "messages": messages,
         "temperature": 0.8,
         "max_tokens": max_tokens(),

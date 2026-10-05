@@ -5,7 +5,8 @@
   - 认不出的指令（非指令内容）直接无视，不回复
   - 只有 @ 没有任何内容 → 视为 /help
   - 单聊同样：空内容 → /help，非指令内容 → 无视
-  - @全体成员的消息一律不响应（四种 payload 形态都测），后面跟指令也不理
+  - @全体成员的消息一律不响应（scope:"all" / everyone 条目 / 官方标签 /
+    频道风格标签 / 字面文本各形态都测），后面跟指令也不理
 """
 
 import asyncio
@@ -235,6 +236,25 @@ async def main() -> int:
     )
     await group_at(m2)
     check("被 @bot 的 /ping 仍正常", m2.text == "pong 🏓", m2.text)
+
+    print("\n[18] 群@：真实 payload 形态 scope:\"all\"（adapter-qq 建模）→ 忽略")
+    m = FakeMessage("/ping", scope="group")
+    raw_events._remember(
+        m.id,
+        {"d": {"mentions": [{"scope": "all", "is_you": True, "username": "全体成员"}]}},
+    )
+    await group_at(m)
+    check("没有任何回复", m.replies == [], str(m.replies))
+
+    print("\n[19] 群@：content 带 <qqbot-at-everyone /> 官方标签 → 忽略")
+    m = FakeMessage("<qqbot-at-everyone /> /ping", scope="group")
+    await group_at(m)
+    check("没有任何回复", m.replies == [], str(m.replies))
+
+    print("\n[20] 群@：频道风格 <@all> 标记 → 忽略")
+    m = FakeMessage("<@all> /ping", scope="group")
+    await group_at(m)
+    check("没有任何回复", m.replies == [], str(m.replies))
 
     print(f"\n{'=' * 50}")
     print(f"失败 {failures} 项")

@@ -260,6 +260,44 @@ def test_poll_once():
 
 
 # ---------------------------------------------------------------------------
+# 4.5 平台主动消息配额错误：单群被拒不影响其他群
+# ---------------------------------------------------------------------------
+def test_push_quota_error():
+    print("[4.5] 平台 22009 配额错误的容错")
+    db = os.path.join(TEST_DIR, "quota.db")
+    os.makedirs(TEST_DIR, exist_ok=True)
+    if os.path.exists(db):
+        os.remove(db)
+    ps = PushStore(db_path=db)
+    asyncio.run(ps.set_enabled("G1", "ak", True))
+    asyncio.run(ps.set_enabled("G2", "ak", True))
+    ark_news._daily_pushed.clear()
+
+    item = ark_news.NewsItem("ak", "99", "版本更新公告", 1790600000, "0", "")
+
+    class QuotaAPI:
+        """G1 抛 22009（平台主动消息超限），G2 正常。"""
+
+        def __init__(self):
+            self.sent = []
+
+        async def post_group_message(self, **kwargs):
+            if kwargs.get("group_openid") == "G1":
+                raise RuntimeError('{"code": 22009, "msg": "msg limit exceed"}')
+            self.sent.append(kwargs)
+
+    api = QuotaAPI()
+    ark_news.fetch_game = fake_fetch_factory({"ak": [item], "endfield": []})
+    try:
+        asyncio.run(ark_news.push_to_groups(api, ps, "ak", ark_news.format_push_text("ak", [item])))
+        check("被拒群不中断循环，其他群照常收到", len(api.sent) == 1 and api.sent[0]["group_openid"] == "G2")
+        check("失败的群不计入每日保险丝", ark_news._daily_pushed.get(("G1", __import__("time").strftime("%Y-%m-%d")), 0) == 0)
+        check("成功的群计入保险丝", ark_news._daily_pushed.get(("G2", __import__("time").strftime("%Y-%m-%d"))) == 1)
+    finally:
+        ark_news._daily_pushed.clear()
+
+
+# ---------------------------------------------------------------------------
 # 5. /公告 指令层
 # ---------------------------------------------------------------------------
 def _content(msg) -> str:
@@ -366,6 +404,7 @@ def main() -> int:
         test_filter_and_aliases()
         test_push_store()
         test_poll_once()
+        test_push_quota_error()
         test_announce_command()
         test_poll_loop_disabled()
     finally:

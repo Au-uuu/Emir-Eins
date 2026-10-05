@@ -61,8 +61,14 @@ IMAGE_COOLDOWN = float(os.getenv("QQ_BOT_IMAGE_COOLDOWN", "3"))
 CHAT_COOLDOWN = float(os.getenv("QQ_BOT_CHAT_COOLDOWN", "5") or 0)
 
 # 只发了图片时写进上下文的占位文本。
-# 模型看不到图，写明白点，免得它顺着上下文瞎编图片内容。
+# 开了看图时它同时作为发给视觉模型的文字部分；历史里也只存文本，
+# 后续轮次靠模型自己的回复就能知道图里是什么。
 IMAGE_ONLY_PLACEHOLDER = "（发了一张图片）"
+
+# 看图：带图消息交给视觉模型。一次最多喂几张、单张多大，
+# 超出直接跳过（DashScope 对 base64 图片有体积上限，别顶线）。
+VISION_MAX_IMAGES = 3
+VISION_MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
 # 看门狗：超过这么久没收到任何网关消息，就认为长连接已死并重启进程（秒）
 WATCHDOG_IDLE_TIMEOUT = float(os.getenv("QQ_BOT_IDLE_TIMEOUT", "900"))
@@ -214,6 +220,10 @@ if persona.available():
     log.info(
         "人格聊天已启用：模型=%s，记忆 %d 条/会话", persona.model(), chat.max_messages
     )
+    if persona.vision_enabled():
+        log.info("看图已启用：视觉模型=%s（带图消息优先走视觉链路）", persona.vl_model())
+    else:
+        log.info("看图未启用：带图消息只按文本处理")
 else:
     log.info("人格聊天未启用（缺 QQ_BOT_QWEN_KEY 或角色卡）")
 
@@ -510,6 +520,32 @@ def collect_image_attachments(message) -> list:
         return out
     raw = get_raw(message)
     _collect_images_from_elements(raw.get("msg_elements"), out)
+    return out
+
+
+async def collect_vision_images(message) -> list[tuple[str, bytes]]:
+    """
+    收集消息里的图片，归一化成视觉模型能吃的 (mime, bytes)。
+
+    任何一环失败（未开看图、下载、格式、转换）都只跳过那一张，绝不抛异常——
+    看图是聊天的加分项，不能因为它把整条回复搞挂。调用方拿到空列表时
+    自行退回纯文本链路。
+    """
+    if not persona.vision_enabled():
+        return []
+    out: list[tuple[str, bytes]] = []
+    for att in collect_image_attachments(message)[:VISION_MAX_IMAGES]:
+        try:
+            data = await store.download(att.url)
+            data, mime, _ = ImageStore._normalize(data, getattr(att, "content_type", ""))
+            if mime == "image/gif":  # 动图只看第一帧
+                data, mime = first_frame_png(data), "image/png"
+            if len(data) > VISION_MAX_IMAGE_BYTES:
+                log.info("[视觉] 图片过大已跳过：%d 字节", len(data))
+                continue
+            out.append((mime, data))
+        except Exception as exc:  # noqa: BLE001
+            log.info("[视觉] 取图失败，已跳过：%s", exc)
     return out
 
 
@@ -1803,21 +1839,29 @@ def mentioned_bot(message) -> bool:
     return False
 
 
-_EVERYONE_MARKUP_RE = re.compile(r"<@!?\s*everyone\s*>", re.IGNORECASE)
+# @全体成员 在 content 里的内联标记。已知两种形态：
+#   <qqbot-at-everyone />   —— 群消息新 payload 的官方标签（adapter-qq 同款解析）
+#   <@!everyone> / <@all>   —— 频道风格的写法，保守起见一并兼容
+_EVERYONE_MARKUP_RE = re.compile(
+    r"<qqbot-at-everyone\s*/?>|<@!?\s*(?:everyone|all)\s*>", re.IGNORECASE
+)
 
 
 def mentions_everyone(message) -> bool:
     """
     这条消息是否 **@ 了全体成员**。
 
-    群主 @全体成员 时，@ 的不是机器人本体，但推送形态没有统一标准——
-    四种可能的样子全查一遍，宁可误杀不可漏放：
+    真实推送形态（依据 nonebot/adapter-qq 对新版群消息 payload 的建模，
+    官方 wiki 未文档化），四种样子全查一遍，宁可误杀不可漏放：
 
-      1. payload 里 mention_everyone 为真值（频道消息有此字段）
-      2. mentions[] 里带 everyone 条目（id / member_openid / username）
-      3. 原始 content 里是 <@!everyone> 之类的角括号标记
-         （normalize_incoming 会把它整个剥掉，必须趁原始形态还在时查）
-      4. 原始 content 里直接是「@全体成员」字面文本
+      1. mentions[] 里混入 scope:"all" 的条目——这是群消息的正规形态；
+         该条目同样带 is_you:true，所以必须放在 mentioned_bot() 判定之前拦截
+      2. mentions[] 里 id/member_openid 为 "everyone" 或 username 含
+         「全体成员」的条目——旧版/变体形态
+      3. 原始 content 里是 <qqbot-at-everyone />、<@!everyone> 之类的内联标记
+         （normalize_incoming 会把标记整个剥掉，必须趁原始形态还在时查）
+      4. 原始 content 里直接是「@全体成员」字面文本；以及 payload 里
+         mention_everyone 为真值（频道消息的字段，群消息保守兼容）
 
     命中即整条忽略，后面跟了指令也不响应：@全体成员 本来就是公告性质，
     bot 不该插话，更不该把「只有 @ 没有正文」误判成 /help 刷帮助图。
@@ -1828,6 +1872,8 @@ def mentions_everyone(message) -> bool:
     for item in raw.get("mentions") or []:
         if not isinstance(item, dict):
             continue
+        if str(item.get("scope") or "").strip().lower() == "all":
+            return True
         ident = str(item.get("id") or item.get("member_openid") or "").strip().lower()
         if ident == "everyone" or "全体成员" in str(item.get("username") or ""):
             return True
@@ -1835,32 +1881,73 @@ def mentions_everyone(message) -> bool:
     return bool(_EVERYONE_MARKUP_RE.search(raw_content) or "@全体成员" in raw_content)
 
 
+def group_preamble(message, tag: str, dedup_prefix: str) -> str | None:
+    """
+    群消息公共前置：去重 → @全体成员守卫 → 正文归一化。
+
+    tag 是日志前缀（群@ / 群全量），dedup_prefix 是去重键前缀（at / all），
+    与历史键格式保持一致。返回归一化后的正文；返回 None 表示这条消息
+    整条忽略，调用方直接 return。两个群消息入口（群@ / 群全量）都必须
+    先过这里，新增入口同理——守卫逻辑只写一遍，避免将来加事件时漏掉。
+    """
+    if dedup.seen(f"{dedup_prefix}:{message.id}"):
+        log.warning("[%s] 重复事件已忽略: %s", tag, message.id)
+        return None
+    # @全体成员的消息一律不响应：它是公告性质，指令、人格聊天、关键词全跳过，
+    # 尤其不能把「只有 @ 没有正文」误判成 /help 往群里刷帮助图
+    if mentions_everyone(message):
+        log.info("[%s] @全体成员消息，已忽略", tag)
+        return None
+    return normalize_incoming(message.content)
+
+
 async def persona_reply(message, scope: str, content: str) -> None:
     """
     人格聊天：把非指令文本交给角色模型，并维护该会话的上下文。
 
     完全被动——只在收到消息时才会走到这里，永远不会主动推送。
+    单聊「只发图片」也走这里（content 传 IMAGE_ONLY_PLACEHOLDER）。
+
+    带图消息（含只发图）优先走视觉模型，人设与纯文本链路共用同一张角色卡；
+    图取不下来 / 视觉关闭时自动退回纯文本行为。
 
     三道静默：
       1. 用户这句话命中敏感词 → 不回，也不记进上下文
       2. 模型调用失败 / 超时 → 不回（避免报错刷屏）
       3. 模型回复命中敏感词 → 丢弃这条回复（宁可装死，也不能把暴论发出去）
     """
-    if not persona.available():
-        return
-
     if sensitive.filter.hit(content):
         log.info("[人格] 命中敏感词，已静默: scope=%s", scope)
         return
 
+    images = await collect_vision_images(message)
+    image_only = content == IMAGE_ONLY_PLACEHOLDER
+
+    if image_only and not images:
+        # 人格未启用 / 没开看图 / 图下载失败都会落到这里——维持 2026-09-28
+        # 的行为契约：不回复，只把占位写进上下文，让紧接着的下一句接得上
+        await chat.append(scope, content, None)
+        log.info("[人格] 只发了图片（图不可用）：已记入上下文，不回复")
+        return
+
+    if not persona.available():
+        return
+
     if not chat_cooldown.allow(scope):
         log.info("[人格] 触发限流，已跳过: scope=%s", scope)
+        if image_only:
+            await chat.append(scope, content, None)
         return
 
     history = await chat.history(scope)
-    reply = await persona.generate(history, content)
+    if images:
+        reply = await persona.generate_vision(history, content, images)
+    else:
+        reply = await persona.generate(history, content)
     if not reply:
         log.info("[人格] 本轮无回复: scope=%s", scope)
+        if image_only:
+            await chat.append(scope, content, None)
         return
 
     hit = sensitive.filter.hit(reply)
@@ -2031,16 +2118,10 @@ class MyClient(botpy.Client):
 
     # 群里被 @ 时触发
     async def on_group_at_message_create(self, message: GroupMessage):
-        if dedup.seen(f"at:{message.id}"):
-            log.warning("重复事件已忽略: %s", message.id)
+        content = group_preamble(message, "群@", "at")
+        if content is None:
             return
 
-        # @全体成员的消息一律不响应（防止「只有@没有正文」被当成 /help）
-        if mentions_everyone(message):
-            log.info("[群@] @全体成员消息，已忽略")
-            return
-
-        content = normalize_incoming(message.content)
         has_image = pick_image_attachment(message.attachments) is not None
         log.info(
             "[群@] group=%s %s: %s%s",
@@ -2051,9 +2132,15 @@ class MyClient(botpy.Client):
         )
 
         try:
-            # 只有 @ 没有任何内容 → 视为 /help
+            # 只有 @ 没有任何内容 → 视为 /help；但 @ 了还带图且开了看图，
+            # 是想让机器人看图，交给人格链路（没开看图则维持 /help）
             if not content:
-                await send_help(message, self.api, "group", message.group_openid)
+                if collect_image_attachments(message) and persona.vision_enabled():
+                    await persona_reply(
+                        message, f"group:{message.group_openid}", IMAGE_ONLY_PLACEHOLDER
+                    )
+                else:
+                    await send_help(message, self.api, "group", message.group_openid)
                 return
             # 指令照常处理；认不出的内容直接无视，不做任何回复
             if await handle_command(
@@ -2071,21 +2158,22 @@ class MyClient(botpy.Client):
     # @前缀），不再单独推 GROUP_AT_MESSAGE_CREATE。所以这里的指令处理不是
     # 「可选的全量响应」，而是群里 @ 机器人能不能用指令的关键。
     async def on_group_message_create(self, message: GroupMessage):
-        if dedup.seen(f"all:{message.id}"):
+        content = group_preamble(message, "群全量", "all")
+        if content is None:
             return
 
-        # @全体成员的消息一律不响应（指令、人格聊天、关键词全跳过）
-        if mentions_everyone(message):
-            log.info("[群全量] @全体成员消息，已忽略")
-            return
-
-        content = normalize_incoming(message.content)
         mentions_me = mentioned_bot(message)
 
         if not content:
-            # 只 @ 了机器人、没写正文 → 与「群@」事件保持一致，给帮助
+            # 只 @ 了机器人、没写正文 → 与「群@」事件保持一致，给帮助；
+            # @ 了还带图且开了看图则是想让它看图，交给人格链路
             if mentions_me:
-                await send_help(message, self.api, "group", message.group_openid)
+                if collect_image_attachments(message) and persona.vision_enabled():
+                    await persona_reply(
+                        message, f"group:{message.group_openid}", IMAGE_ONLY_PLACEHOLDER
+                    )
+                else:
+                    await send_help(message, self.api, "group", message.group_openid)
             return
 
         log.info(
@@ -2151,15 +2239,14 @@ class MyClient(botpy.Client):
         )
 
         try:
-            # 空内容：只发了一张图片（含引用的图片）→ **不回复**，但记进上下文，
-            # 让紧接着的下一句（「这张图好可爱」）能接得上
+            # 空内容：只发了一张图片（含引用的图片）→ 交给人格链路：开了看图
+            # 就能让模型「看着图」回复，图不可用时自动退回旧行为（只记占位）
             # 其余空内容（例如只发了个表情）→ 视为 /help（管理员给完整表）
             if not content:
                 if collect_image_attachments(message):
-                    await chat.append(
-                        f"c2c:{openid or 'unknown'}", IMAGE_ONLY_PLACEHOLDER, None
+                    await persona_reply(
+                        message, f"c2c:{openid or 'unknown'}", IMAGE_ONLY_PLACEHOLDER
                     )
-                    log.info("[单聊] 只发了图片：已记入上下文，不回复")
                     return
                 await send_help(
                     message,
