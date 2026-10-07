@@ -1972,7 +1972,9 @@ async def persona_reply(message, scope: str, content: str) -> None:
 
     hit = sensitive.filter.hit(reply)
     if hit:
-        log.warning("[人格] 模型回复命中敏感词「%s」，已丢弃", hit)
+        # 把回复开头一起打出来：「怎么不回复」类问题没有原文根本没法排查
+        #（2026-10-07 实锤：【抗议】标签整段回复被杀，日志只有个词）
+        log.warning("[人格] 模型回复命中敏感词「%s」，已丢弃：%s", hit, reply[:60])
         await chat.append(scope, content, None)
         return
 
