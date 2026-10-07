@@ -73,6 +73,12 @@ VISION_MAX_IMAGE_BYTES = 8 * 1024 * 1024
 # 单发一张 GIF 时抽几帧给模型（首/中/尾），动图的梗常在后面，只看第一帧会漏
 VISION_GIF_FRAMES = 3
 
+# 引用消息（含合并转发卡片）：QQ 平台把被引用内容合成为可读文本塞进
+# msg_elements[].content，带 [消息类型] 引用消息 标记，图片以 URL: 形式内嵌。
+QUOTE_MARKER = "[消息类型] 引用消息"
+QUOTE_TEXT_CAP = 600
+_QUOTE_URL_RE = re.compile(r"URL:(https?://\S+)")
+
 # 看门狗：超过这么久没收到任何网关消息，就认为长连接已死并重启进程（秒）
 WATCHDOG_IDLE_TIMEOUT = float(os.getenv("QQ_BOT_IDLE_TIMEOUT", "900"))
 
@@ -530,23 +536,69 @@ def collect_image_attachments(message) -> list:
     return out
 
 
+def quoted_content(message) -> str:
+    """
+    抽出「被引用消息」的平台展开文本（普通引用和合并转发卡片都适用）。
+
+    QQ 平台把引用内容合成为可读文本塞进 msg_elements[].content（带
+    [消息类型] 引用消息 标记；合并转发卡片会展开成 === 消息 N === 的摘要）。
+    之前只收集引用的图片、引用的文字一直没喂给模型，导致「引用一段话/一张
+    聊天记录问什么意思」时模型两手空空只能凭记忆脑编（2026-10-07 实锤）。
+    找不到引用内容返回空串。URL 对模型无用还烧 token，抹掉（图走取图链路）。
+    """
+    raw = get_raw(message)
+    blocks: list[str] = []
+    for el in raw.get("msg_elements") or []:
+        if not isinstance(el, dict):
+            continue
+        text = (el.get("content") or "").strip()
+        if text and QUOTE_MARKER in text:
+            blocks.append(text)
+    if not blocks:
+        return ""
+    merged = _QUOTE_URL_RE.sub("URL:（略）", "\n".join(blocks))
+    return merged[:QUOTE_TEXT_CAP]
+
+
 async def collect_vision_images(message) -> list[tuple[str, bytes]]:
     """
     收集消息里的图片，归一化成视觉模型能吃的 (mime, bytes)。
 
-    任何一环失败（未开看图、下载、格式、转换）都只跳过那一张，绝不抛异常——
-    看图是聊天的加分项，不能因为它把整条回复搞挂。调用方拿到空列表时
-    自行退回纯文本链路。
+    来源有两处：消息/引用元素的 attachments，以及引用文本里内嵌的图片 URL
+    （合并转发卡片把图以 URL: 形式写在文字摘要里）。任何一环失败（未开看图、
+    下载、格式、转换）都只跳过那一张，绝不抛异常——看图是聊天的加分项，不能
+    因为它把整条回复搞挂。调用方拿到空列表时自行退回纯文本链路。
     """
     if not persona.vision_enabled():
         return []
-    attachments = collect_image_attachments(message)[:VISION_MAX_IMAGES]
+    # 候选：(url, content_type)。先 attachments，再引用文本里的内嵌 URL（去重）
+    candidates: list[tuple[str, str]] = [
+        (att.url, getattr(att, "content_type", ""))
+        for att in collect_image_attachments(message)[:VISION_MAX_IMAGES]
+    ]
+    seen_urls = {url for url, _ in candidates}
+    raw = get_raw(message)
+    for el in raw.get("msg_elements") or []:
+        if len(candidates) >= VISION_MAX_IMAGES:
+            break
+        if not isinstance(el, dict):
+            continue
+        text = el.get("content") or ""
+        if QUOTE_MARKER not in text:
+            continue
+        for url in _QUOTE_URL_RE.findall(text):
+            if url not in seen_urls:
+                seen_urls.add(url)
+                candidates.append((url, ""))
+            if len(candidates) >= VISION_MAX_IMAGES:
+                break
+
     out: list[tuple[str, bytes]] = []
-    for att in attachments:
+    for url, content_type in candidates:
         try:
-            data = await store.download(att.url)
-            data, mime, _ = ImageStore._normalize(data, getattr(att, "content_type", ""))
-            if mime == "image/gif" and len(attachments) == 1:
+            data = await store.download(url)
+            data, mime, _ = ImageStore._normalize(data, content_type or None)
+            if mime == "image/gif" and len(candidates) == 1:
                 # 单发动图：抽首/中/尾几帧让模型看懂动作梗；抽帧失败退回首帧。
                 # 多图混发时名额要留给每张图，GIF 仍只看第一帧
                 frames = [
@@ -1960,10 +2012,17 @@ async def persona_reply(message, scope: str, content: str) -> None:
         return
 
     history = await chat.history(scope)
+    # 引用提问（「引用一张图/一段话/一份聊天记录 + 这是什么」）：
+    # 把被引用内容的平台展开文本拼进本轮输入，模型才有东西可看可答。
+    # 只拼当前轮，历史里仍存原文，不膨胀记忆。
+    model_text = content
+    quote = quoted_content(message)
+    if quote:
+        model_text = f"（用户引用了下面这条消息提问：\n{quote}\n）\n{content}"
     if images:
-        reply = await persona.generate_vision(history, content, images)
+        reply = await persona.generate_vision(history, model_text, images)
     else:
-        reply = await persona.generate(history, content)
+        reply = await persona.generate(history, model_text)
     if not reply:
         log.info("[人格] 本轮无回复: scope=%s", scope)
         if image_only:

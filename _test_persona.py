@@ -420,6 +420,70 @@ async def main() -> int:
     )
     persona.vision_enabled = lambda: True
 
+    # ---------------- 6. 引用消息：引用文本进模型 + 引用卡片里的图 ----------------
+    print("\n[6] 引用消息：引用文本与合并转发卡片")
+
+    QUOTE_BLOCK = (
+        "=== 消息 1 ===\n[消息内容] [群聊的聊天记录]\n[消息类型] 引用消息\n"
+        "--- 第1条 ---\n    [发送者] s_hamster\n"
+        "    [附件1] 类型:图片 文件名:a.jpg URL:https://img.example/a.jpg"
+    )
+
+    m = FakeMessage("这句话啥意思")
+    raw_events._remember(m.id, {"d": {"msg_elements": [{"content": QUOTE_BLOCK}]}})
+    q = bot.quoted_content(m)
+    check("引用文本被抽出", "引用消息" in q and "s_hamster" in q, q[:40])
+    check("引用里的 URL 被抹掉", "img.example" not in q)
+
+    m = FakeMessage("没有引用")
+    check("无引用返回空串", bot.quoted_content(m) == "")
+
+    persona.available = lambda: True
+    persona.vision_enabled = lambda: True
+    cap = {}
+
+    async def vision_cap(history, text, images):
+        cap["text"], cap["imgs"] = text, images
+        return "【看图】好的"
+
+    persona.generate = fail_generate
+    persona.generate_vision = vision_cap
+
+    async def url_png_download(url):
+        return PNG_BYTES
+
+    bot.store.download = url_png_download
+    m = FakeMessage("这是什么")
+    raw_events._remember(m.id, {"d": {"msg_elements": [{"content": QUOTE_BLOCK}]}})
+    await bot.persona_reply(m, "group:QT1", "这是什么")
+    check(
+        "引用文本拼进模型输入",
+        "引用了下面这条消息" in cap.get("text", "") and "s_hamster" in cap["text"],
+    )
+    check(
+        "引用块里的图片被取到",
+        len(cap.get("imgs", [])) == 1 and cap["imgs"][0][0] == "image/png",
+    )
+
+    persona.vision_enabled = lambda: False
+
+    async def text_cap(history, text):
+        cap["text2"] = text
+        return "【回答】好的"
+
+    persona.generate = text_cap
+
+    async def boom_download(url):
+        raise AssertionError("未开看图不该下载引用图")
+
+    bot.store.download = boom_download
+    m = FakeMessage("这是什么")
+    raw_events._remember(m.id, {"d": {"msg_elements": [{"content": QUOTE_BLOCK}]}})
+    await bot.persona_reply(m, "group:QT2", "这是什么")
+    check("未开看图时引用文本仍进模型", "引用了下面这条消息" in cap.get("text2", ""))
+    persona.vision_enabled = lambda: True
+    bot.store.download = png_download
+
     print(f"\n{'=' * 50}")
     print(f"失败 {failures} 项")
     return 1 if failures else 0
