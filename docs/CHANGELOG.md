@@ -38,6 +38,7 @@
 | 2026-10-07 | 看图升级：单发 GIF 抽首/中/尾 3 帧（混发仍看首帧），动图「梗在后面」能看懂了 | [gif-frames](changes/2026-10-07-gif-frames.md) |
 | 2026-10-07 | 角色卡重写：新增看图行为（图≠本机自拍、先识图后入戏）与群聊守则（短回复/防复读/恋爱脑只对主人）；删「自拍配菜」示例台词 | [persona-card-group](changes/2026-10-07-persona-card-group.md) |
 | 2026-10-07 | `/help` 加入 AI 聊天介绍：【闲聊】小节（单聊直说/群 @、看图玩法、图片不入库） | [help-chat-section](changes/2026-10-07-help-chat-section.md) |
+| 2026-10-07 | 动漫角色识别：角色卡补「尽力报名、不编名字」；视觉模型升级 `qwen3-vl-plus`（实测不瞎猜不自拍） | [anime-recognition](changes/2026-10-07-anime-recognition.md) |
 
 ## 约定
 
