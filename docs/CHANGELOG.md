@@ -35,6 +35,7 @@
 | 2026-10-04 | 公告推送：修复重启会吞公告的隐患（首轮判定改用持久化 seen 表）+ 关键词放宽到含「活动预告」 | [ark-news-push](changes/2026-10-02-ark-news-push.md) |
 | 2026-10-04 | 架构调研落地：群消息前置抽取、@全体成员真实 payload 形态、公告推送配额认知修正（22009 识别） | [arch-review-optimizations](changes/2026-10-04-arch-review-optimizations.md) |
 | 2026-10-05 | 人格聊天看图：带图消息切换 `qwen3-vl-flash`（同角色卡同历史），单聊发图会回复；隐私协议同步改写 | [persona-vision](changes/2026-10-05-persona-vision.md) |
+| 2026-10-07 | 看图升级：单发 GIF 抽首/中/尾 3 帧（混发仍看首帧），动图「梗在后面」能看懂了 | [gif-frames](changes/2026-10-07-gif-frames.md) |
 
 ## 约定
 

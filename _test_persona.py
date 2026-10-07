@@ -350,9 +350,47 @@ async def main() -> int:
         ImgMessage("", [make_att(ct="image/gif")])
     )
     check(
-        "GIF 只取首帧并转 PNG",
+        "假 GIF（魔数是 PNG）不受抽帧影响",
         len(imgs) == 1 and imgs[0][0] == "image/png" and imgs[0][1][:4] == b"\x89PNG",
     )
+
+    # 真·动图：PIL 生成 4 帧彩色 GIF（红/绿/蓝/黄），验证抽帧
+    import io as _io
+
+    from PIL import Image as _Img
+
+    _buf = _io.BytesIO()
+    _frames = [
+        _Img.new("RGB", (32, 32), c)
+        for c in ((255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0))
+    ]
+    _frames[0].save(
+        _buf, format="GIF", save_all=True, append_images=_frames[1:], duration=100
+    )
+
+    async def gif_download(url):
+        return _buf.getvalue()
+
+    bot.store.download = gif_download
+    imgs = await bot.collect_vision_images(
+        ImgMessage("", [make_att(ct="image/gif")])
+    )
+    check(
+        "单发动图抽 3 帧（PNG）",
+        len(imgs) == 3 and all(m == "image/png" and d[:4] == b"\x89PNG" for m, d in imgs),
+        f"n={len(imgs)}",
+    )
+    check("抽的是首/中/尾不同帧", len({d for _, d in imgs}) == 3)
+
+    imgs = await bot.collect_vision_images(
+        ImgMessage("", [make_att(ct="image/gif"), make_att(url="http://img/b.png")])
+    )
+    check(
+        "动图混发时只看首帧（共 2 张）",
+        len(imgs) == 2 and all(m == "image/png" for m, _ in imgs),
+        f"n={len(imgs)}",
+    )
+    bot.store.download = png_download
 
     imgs = await bot.collect_vision_images(
         ImgMessage("", [make_att(url=f"http://img/{i}.png") for i in range(5)])

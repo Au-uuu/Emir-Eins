@@ -35,6 +35,7 @@ from image_store import (
     first_frame_png,
     make_card_sheet,
     make_contact_sheet,
+    sample_frames_png,
 )
 from push_store import PushStore
 from raw_events import get_raw, install as install_raw_events
@@ -69,6 +70,8 @@ IMAGE_ONLY_PLACEHOLDER = "（发了一张图片）"
 # 超出直接跳过（DashScope 对 base64 图片有体积上限，别顶线）。
 VISION_MAX_IMAGES = 3
 VISION_MAX_IMAGE_BYTES = 8 * 1024 * 1024
+# 单发一张 GIF 时抽几帧给模型（首/中/尾），动图的梗常在后面，只看第一帧会漏
+VISION_GIF_FRAMES = 3
 
 # 看门狗：超过这么久没收到任何网关消息，就认为长连接已死并重启进程（秒）
 WATCHDOG_IDLE_TIMEOUT = float(os.getenv("QQ_BOT_IDLE_TIMEOUT", "900"))
@@ -533,12 +536,25 @@ async def collect_vision_images(message) -> list[tuple[str, bytes]]:
     """
     if not persona.vision_enabled():
         return []
+    attachments = collect_image_attachments(message)[:VISION_MAX_IMAGES]
     out: list[tuple[str, bytes]] = []
-    for att in collect_image_attachments(message)[:VISION_MAX_IMAGES]:
+    for att in attachments:
         try:
             data = await store.download(att.url)
             data, mime, _ = ImageStore._normalize(data, getattr(att, "content_type", ""))
-            if mime == "image/gif":  # 动图只看第一帧
+            if mime == "image/gif" and len(attachments) == 1:
+                # 单发动图：抽首/中/尾几帧让模型看懂动作梗；抽帧失败退回首帧。
+                # 多图混发时名额要留给每张图，GIF 仍只看第一帧
+                frames = [
+                    f
+                    for f in sample_frames_png(data, VISION_GIF_FRAMES)
+                    if len(f) <= VISION_MAX_IMAGE_BYTES
+                ]
+                if frames:
+                    out.extend(("image/png", f) for f in frames)
+                    continue
+                data, mime = first_frame_png(data), "image/png"
+            elif mime == "image/gif":  # 混发里的动图只看第一帧
                 data, mime = first_frame_png(data), "image/png"
             if len(data) > VISION_MAX_IMAGE_BYTES:
                 log.info("[视觉] 图片过大已跳过：%d 字节", len(data))

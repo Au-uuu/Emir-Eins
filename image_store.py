@@ -350,6 +350,46 @@ def first_frame_png(data: bytes) -> bytes:
         raise ValueError(f"图片转换失败：{exc}") from exc
 
 
+def sample_frames_png(data: bytes, count: int) -> list[bytes]:
+    """
+    从动图（GIF 等）里均匀抽 count 帧，每帧转成 PNG，返回帧列表。
+
+    给看图功能用：动图只看第一帧会丢「梗在后面」的内容，抽首/中/尾几帧
+    让模型能推断动作。帧数不足 count 就取全部；静止图（单帧）返回空列表，
+    任何失败也返回空列表，调用方自行退回 first_frame_png。
+    """
+    try:
+        import io
+
+        from PIL import Image
+    except ImportError:
+        return []
+
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            n = int(getattr(im, "n_frames", 1))
+            if n <= 1:
+                return []
+            if count <= 1:
+                idxs = [0]
+            else:
+                # 首/中/尾均匀取样；去重应对帧数少于 count 的短动图
+                idxs = sorted({round(i * (n - 1) / (count - 1)) for i in range(count)})
+            out: list[bytes] = []
+            for i in idxs:
+                im.seek(i)
+                has_alpha = im.mode in ("RGBA", "LA") or (
+                    im.mode == "P" and "transparency" in im.info
+                )
+                frame = im.convert("RGBA" if has_alpha else "RGB")
+                buf = io.BytesIO()
+                frame.save(buf, format="PNG", optimize=True)
+                out.append(buf.getvalue())
+            return out
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def convert_to_sendable(data: bytes, mime: str) -> tuple[bytes, str, str]:
     """
     把图片归一化成 QQ 能发送的格式。
