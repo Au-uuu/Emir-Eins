@@ -42,6 +42,7 @@
 | 2026-10-07 | 修复回复被静默吞掉：敏感词表误杀角色标签【抗议】（含游行/示威）加入放行名单；丢弃日志附回复原文 | [sensitive-allow-tags](changes/2026-10-07-sensitive-allow-tags.md) |
 | 2026-10-07 | 引用消息接入：引用文本喂给模型、合并转发卡片（聊天记录）展开内容可读、卡片里的图能看 | [quoted-message-context](changes/2026-10-07-quoted-message-context.md) |
 | 2026-10-07 | 动漫识别强化：图库指纹反查把群标注喂给模型 + 角色速查表（佩丽卡/阿米娅）+ 描述规避政治词 | [gallery-hints-anime](changes/2026-10-07-gallery-hints-anime.md) |
+| 2026-10-07 | 撤销图库反查（群标注不可靠）；接入 WD14 本地打标：已收录角色出「识别线索」，实测初音 0.99/周边 0.94 | [wd14-tagger](changes/2026-10-07-wd14-tagger.md) |
 
 ## 约定
 

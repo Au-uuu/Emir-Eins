@@ -2,3 +2,5 @@ qq-botpy>=1.2.1
 python-dotenv>=1.0.0
 # 图片格式归一化：QQ 只接受 png/jpg，GIF/WebP/BMP 需转成 PNG
 Pillow>=10.0.0
+# WD14 动漫打标（看图链路的「识别线索」）：本地 ONNX 推理，模型见 tagger.py
+onnxruntime>=1.17.0

@@ -28,6 +28,7 @@ import ark_news
 import help_image
 import persona
 import sensitive
+import tagger
 import watchdog
 from chat_store import ChatStore
 from image_store import (
@@ -619,6 +620,33 @@ async def collect_vision_images(message) -> list[tuple[str, bytes]]:
         except Exception as exc:  # noqa: BLE001
             log.info("[视觉] 取图失败，已跳过：%s", exc)
     return out
+
+
+async def tagger_hints(images: list[tuple[str, bytes]]) -> str:
+    """
+    WD14 打标：给视觉模型补「识别线索」（character/copyright 标签）。
+
+    qwen3-vl 认不出 Danbooru 收录之外的新角色（终末地这类 2026 年的新游戏），
+    WD14 是同一堵墙的另一面——但它对已收录角色（几千个，含大量 gacha）的
+    「特征→标签」映射远比 qwen 稳。命中就拼线索，中文译名交给 qwen；
+    未命中/打标失败返回空串，零影响。
+    """
+    try:
+        chars, copies = await tagger.tag_image(images[0][1])
+    except Exception as exc:  # noqa: BLE001
+        log.info("[视觉] 打标失败：%s", exc)
+        return ""
+    if not chars and not copies:
+        return ""
+    parts = []
+    if copies:
+        parts.append("作品=" + ",".join(copies))
+    if chars:
+        parts.append("角色=" + ",".join(chars))
+    return (
+        "（识别线索：本机离线打标器认为图中含 " + "；".join(parts) +
+        "。danbooru 标签仅供参考，与画面矛盾时以画面为准）\n"
+    )
 
 
 def uploader_of(api) -> MediaUploader:
@@ -2020,6 +2048,10 @@ async def persona_reply(message, scope: str, content: str) -> None:
     if quote:
         model_text = f"（用户引用了下面这条消息提问：\n{quote}\n）\n{content}"
     if images:
+        # WD14 打标线索：已收录角色的特征→标签映射，帮视觉模型报出角色名
+        hints = await tagger_hints(images)
+        if hints:
+            model_text = hints + model_text
         reply = await persona.generate_vision(history, model_text, images)
     else:
         reply = await persona.generate(history, model_text)

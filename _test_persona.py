@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bot  # noqa: E402
 import persona  # noqa: E402
 import sensitive  # noqa: E402
+import tagger  # noqa: E402
 from chat_store import ChatStore  # noqa: E402
 
 failures = 0
@@ -484,6 +485,29 @@ async def main() -> int:
     check("未开看图时引用文本仍进模型", "引用了下面这条消息" in cap.get("text2", ""))
     persona.vision_enabled = lambda: True
     bot.store.download = png_download
+
+    # ---------------- 7. WD14 打标线索 ----------------
+    print("\n[7] WD14 打标线索")
+
+    async def fake_tag(data):
+        return ["hatsune_miku"], ["vocaloid"]
+
+    tagger.tag_image = fake_tag
+    m = ImgMessage("这是谁", [make_att()])
+    await bot.persona_reply(m, "group:TH1", "这是谁")
+    check(
+        "打标线索进模型输入",
+        "识别线索" in cap.get("text", "") and "hatsune_miku" in cap.get("text", ""),
+        cap.get("text", "")[:60],
+    )
+
+    async def empty_tag(data):
+        return [], []
+
+    tagger.tag_image = empty_tag
+    m = ImgMessage("这是谁", [make_att(url="http://img/b2.png")])
+    await bot.persona_reply(m, "group:TH2", "这是谁")
+    check("无标签则无线索前缀", "识别线索" not in cap.get("text", ""))
 
     print(f"\n{'=' * 50}")
     print(f"失败 {failures} 项")
