@@ -560,16 +560,14 @@ def quoted_content(message) -> str:
     return merged[:QUOTE_TEXT_CAP]
 
 
-async def collect_vision_images(message) -> list[tuple[str, bytes, str]]:
+async def collect_vision_images(message) -> list[tuple[str, bytes]]:
     """
-    收集消息里的图片，归一化成视觉模型能吃的 (mime, bytes, sha256)。
+    收集消息里的图片，归一化成视觉模型能吃的 (mime, bytes)。
 
-    sha256 按「与图库入库完全相同的归一化字节」计算（在 GIF 抽帧之前），
-    供图库指纹反查用。来源有两处：消息/引用元素的 attachments，以及引用文本
-    里内嵌的图片 URL（合并转发卡片把图以 URL: 形式写在文字摘要里）。
-    任何一环失败（未开看图、下载、格式、转换）都只跳过那一张，绝不抛异常——
-    看图是聊天的加分项，不能因为它把整条回复搞挂。调用方拿到空列表时
-    自行退回纯文本链路。
+    来源有两处：消息/引用元素的 attachments，以及引用文本里内嵌的图片 URL
+    （合并转发卡片把图以 URL: 形式写在文字摘要里）。任何一环失败（未开看图、
+    下载、格式、转换）都只跳过那一张，绝不抛异常——看图是聊天的加分项，不能
+    因为它把整条回复搞挂。调用方拿到空列表时自行退回纯文本链路。
     """
     if not persona.vision_enabled():
         return []
@@ -595,12 +593,11 @@ async def collect_vision_images(message) -> list[tuple[str, bytes, str]]:
             if len(candidates) >= VISION_MAX_IMAGES:
                 break
 
-    out: list[tuple[str, bytes, str]] = []
+    out: list[tuple[str, bytes]] = []
     for url, content_type in candidates:
         try:
             data = await store.download(url)
             data, mime, _ = ImageStore._normalize(data, content_type or None)
-            sha = hashlib.sha256(data).hexdigest()
             if mime == "image/gif" and len(candidates) == 1:
                 # 单发动图：抽首/中/尾几帧让模型看懂动作梗；抽帧失败退回首帧。
                 # 多图混发时名额要留给每张图，GIF 仍只看第一帧
@@ -610,7 +607,7 @@ async def collect_vision_images(message) -> list[tuple[str, bytes, str]]:
                     if len(f) <= VISION_MAX_IMAGE_BYTES
                 ]
                 if frames:
-                    out.extend(("image/png", f, sha) for f in frames)
+                    out.extend(("image/png", f) for f in frames)
                     continue
                 data, mime = first_frame_png(data), "image/png"
             elif mime == "image/gif":  # 混发里的动图只看第一帧
@@ -618,31 +615,10 @@ async def collect_vision_images(message) -> list[tuple[str, bytes, str]]:
             if len(data) > VISION_MAX_IMAGE_BYTES:
                 log.info("[视觉] 图片过大已跳过：%d 字节", len(data))
                 continue
-            out.append((mime, data, sha))
+            out.append((mime, data))
         except Exception as exc:  # noqa: BLE001
             log.info("[视觉] 取图失败，已跳过：%s", exc)
     return out
-
-
-async def gallery_hints(images: list[tuple[str, bytes, str]]) -> str:
-    """
-    图库指纹反查：同一张图被群友收进图库标过关键词的话，把标注喂给模型当线索。
-
-    群友转发同一张立绘/表情包非常常见——图库就是本群自己养的「识别知识库」，
-    标得越多机器人认得越准。命中不了（新图/GIF 抽帧后指纹不同）返回空串。
-    """
-    lines: list[str] = []
-    for idx, (_mime, _data, sha) in enumerate(images, 1):
-        try:
-            kws = await store.keywords_by_sha(sha)
-        except Exception as exc:  # noqa: BLE001
-            log.info("[视觉] 图库反查失败：%s", exc)
-            continue
-        if kws:
-            lines.append(f"图{idx} 在本群图库被标注为「{'、'.join(kws)}」")
-    if not lines:
-        return ""
-    return "（本机图库线索：" + "；".join(lines) + "）\n"
 
 
 def uploader_of(api) -> MediaUploader:
@@ -2044,11 +2020,7 @@ async def persona_reply(message, scope: str, content: str) -> None:
     if quote:
         model_text = f"（用户引用了下面这条消息提问：\n{quote}\n）\n{content}"
     if images:
-        # 图库反查：这张图若被群友标过关键词，把标注当线索喂给模型
-        model_text = await gallery_hints(images) + model_text
-        reply = await persona.generate_vision(
-            history, model_text, [(m, d) for m, d, _ in images]
-        )
+        reply = await persona.generate_vision(history, model_text, images)
     else:
         reply = await persona.generate(history, model_text)
     if not reply:
