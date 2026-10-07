@@ -1092,6 +1092,20 @@ class ImageStore:
             ).fetchone()
             return self._to_record(conn, row) if row else None
 
+    async def keywords_by_sha(self, sha: str) -> list[str]:
+        """按指纹查图的关键词（看图的「图库反查注入」用，公开层 + 全部群）。"""
+        return await asyncio.to_thread(self._keywords_by_sha_sync, sha)
+
+    def _keywords_by_sha_sync(self, sha: str) -> list[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT k.keyword FROM images i "
+                "JOIN keywords k ON k.image_id = i.id "
+                "WHERE i.sha256 = ? ORDER BY k.keyword LIMIT 5",
+                (sha,),
+            ).fetchall()
+            return [r["keyword"] for r in rows]
+
     def _to_record(
         self, conn: sqlite3.Connection, row: sqlite3.Row, group: str = ""
     ) -> ImageRecord:

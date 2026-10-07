@@ -377,17 +377,18 @@ async def main() -> int:
     )
     check(
         "单发动图抽 3 帧（PNG）",
-        len(imgs) == 3 and all(m == "image/png" and d[:4] == b"\x89PNG" for m, d in imgs),
+        len(imgs) == 3
+        and all(m == "image/png" and d[:4] == b"\x89PNG" for m, d, _ in imgs),
         f"n={len(imgs)}",
     )
-    check("抽的是首/中/尾不同帧", len({d for _, d in imgs}) == 3)
+    check("抽的是首/中/尾不同帧", len({d for _, d, _ in imgs}) == 3)
 
     imgs = await bot.collect_vision_images(
         ImgMessage("", [make_att(ct="image/gif"), make_att(url="http://img/b.png")])
     )
     check(
         "动图混发时只看首帧（共 2 张）",
-        len(imgs) == 2 and all(m == "image/png" for m, _ in imgs),
+        len(imgs) == 2 and all(m == "image/png" for m, _, _ in imgs),
         f"n={len(imgs)}",
     )
     bot.store.download = png_download
@@ -483,6 +484,33 @@ async def main() -> int:
     check("未开看图时引用文本仍进模型", "引用了下面这条消息" in cap.get("text2", ""))
     persona.vision_enabled = lambda: True
     bot.store.download = png_download
+
+    # ---------------- 7. 图库指纹反查：群标注当识别线索 ----------------
+    print("\n[7] 图库指纹反查")
+
+    import hashlib as _hl
+
+    png_sha = _hl.sha256(PNG_BYTES).hexdigest()
+
+    async def kws_hit(sha):
+        return ["菲比", "群友"] if sha == png_sha else []
+
+    bot.store.keywords_by_sha = kws_hit
+    m = ImgMessage("这是谁", [make_att()])
+    await bot.persona_reply(m, "group:GH1", "这是谁")
+    check(
+        "图库标注进模型输入",
+        "本机图库线索" in cap.get("text", "") and "菲比" in cap.get("text", ""),
+        cap.get("text", "")[:60],
+    )
+
+    async def kws_none(sha):
+        return []
+
+    bot.store.keywords_by_sha = kws_none
+    m = ImgMessage("这是谁", [make_att(url="http://img/new.png")])
+    await bot.persona_reply(m, "group:GH2", "这是谁")
+    check("未命中图库则无线索前缀", "图库线索" not in cap.get("text", ""))
 
     print(f"\n{'=' * 50}")
     print(f"失败 {failures} 项")
