@@ -1176,6 +1176,61 @@ async def do_delete_image(message, api, scope: str, scene_id: str, text: str) ->
     await message.reply(content=body)
 
 
+# 「层」的自然说法：**刻意不出现「层」字**。
+# 用户没指定层（all）时根本不提——线上真出现过这种尴尬：
+#   用户：来只金鑫
+#   机器人：没有找到关键词「金鑫」在「全部」层里的图片，换个词/层或先用 /添加 存图。
+# 「全部」层是内部概念，用户没得选也不关心；「换个层」更是把实现细节当成了用户操作。
+_LAYER_PHRASE = {
+    "all": "",
+    "public": "公开图库里",
+    "private": "本群私有图库里",
+}
+
+
+async def _reply_no_random_image(
+    message, keyword: str, layer: str, group_openid: str | None
+) -> None:
+    """
+    「来只」抽不到图时说什么。
+
+    两条原则：
+
+      1. **说人话**：不提「层」这个内部概念；用户没指定层就完全别提
+      2. **给下一步**：像 `/图库 关键词` 那样给出相近的关键词，而不是干巴巴一句
+         「换个词」——查不到的时候，用户最需要的是「到底有哪些词能用」
+    """
+    where = _LAYER_PHRASE.get(layer, "")
+
+    if not keyword:
+        await message.reply(content=f"{where}还没有图片，先用 /添加 存几张吧。")
+        return
+
+    # 别名会解析到主关键词再查，查不到时把真实生效的那个词也告诉用户
+    resolved = await store.resolve_keyword(keyword)
+    hint = f"（已按关联词「{resolved}」查）" if resolved and resolved != keyword else ""
+
+    # 排除自己/主词，否则会出现「没有『猫』的图，你是不是想找：猫（12）」这种鬼话
+    fuzzy = [
+        (k, c)
+        for k, c in await store.find_keywords(keyword, group_openid, limit=10)
+        if k not in (keyword, resolved)
+    ]
+    if fuzzy:
+        lines = "\n".join(f"{k}（{c}）" for k, c in fuzzy)
+        await message.reply(
+            content=f"{where}没有「{keyword}」的图{hint}，你是不是想找：\n{lines}"
+        )
+        return
+
+    await message.reply(
+        content=(
+            f"{where}没有「{keyword}」的图{hint}。"
+            f"引用一张图回复「/添加 {keyword}」就能存进来。"
+        )
+    )
+
+
 async def do_random_image(message, api, scope: str, scene_id: str, text: str) -> None:
     """处理「来只」指令：随机取一张图并发送。"""
     args = split_keywords(RANDOM_RE.match(text).group(1) or "")
@@ -1187,21 +1242,7 @@ async def do_random_image(message, api, scope: str, scene_id: str, text: str) ->
     group_openid = scene_id if scope == "group" else None
     rec = await store.random_image(keyword or None, group_openid, layer)
     if rec is None:
-        layer_cn = {v: k for k, v in LAYER_WORDS.items()}.get(layer, "全部")
-        if keyword:
-            # 别名会解析到主关键词再查，查不到时把真实生效的词也告诉用户
-            resolved = await store.resolve_keyword(keyword)
-            hint = f"（已按主关键词「{resolved}」查询）" if resolved and resolved != keyword else ""
-            await message.reply(
-                content=(
-                    f"没有找到关键词「{keyword}」在「{layer_cn}」层里的图片{hint}，"
-                    "换个词/层或先用 /添加 存图。"
-                )
-            )
-        else:
-            await message.reply(
-                content=f"图库「{layer_cn}」里还没有图片，先用 /添加 存一张图吧。"
-            )
+        await _reply_no_random_image(message, keyword, layer, group_openid)
         return
 
     try:

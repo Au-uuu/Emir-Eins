@@ -135,6 +135,21 @@ async def main() -> int:
     await bot.do_random_image(m, FakeApi(), "group", "G_TEST", "/来只 不存在")
     check("有文字提示", len(m.text_replies) == 1, str(m.text_replies))
     check("没有发图", len(m.sent_images) == 0)
+    body = m.text_replies[0] or ""
+    check("不暴露「层」这个内部概念", "层" not in body, body)
+    check("给出下一步（怎么存图）", "/添加" in body, body)
+
+    # 查不到时若库里有相近关键词，应像 /图库 那样推荐，而不是干巴巴一句「换个词」
+    m = FakeMessage("/来只 deep")
+    await bot.do_random_image(m, FakeApi(), "group", "G_TEST", "/来只 deep")
+    body = m.text_replies[0] or ""
+    check("相近关键词会推荐", "你是不是想找" in body and "deepseek" in body, body)
+
+    # 显式指定层时才提层，且用自然说法
+    m = FakeMessage("/来只 不存在 私有")
+    await bot.do_random_image(m, FakeApi(), "group", "G_TEST", "/来只 不存在 私有")
+    body = m.text_replies[0] or ""
+    check("指定私有层时说人话", "本群私有图库" in body and "层" not in body, body)
 
     print("\n[5] /来只 空图库")
     empty = ImageStore(
