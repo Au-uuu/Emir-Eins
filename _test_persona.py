@@ -252,9 +252,12 @@ async def main() -> int:
     )
 
     # 视觉模型配置
-    check("视觉模型默认 qwen3-vl-flash", persona.vl_model() == "qwen3-vl-flash")
-    persona.available = lambda: True
+    # ⚠️ 断言「默认值」前必须先把环境变量清掉：服务器 .env 里配的是 plus，
+    #    直接读环境会拿到非默认值 —— 这条曾在本地过、服务器挂（踩过第二次了）。
     old_vl = os.environ.get("QQ_BOT_QWEN_VL_MODEL")
+    os.environ.pop("QQ_BOT_QWEN_VL_MODEL", None)
+    check("未配置时视觉模型默认 qwen3-vl-flash", persona.vl_model() == "qwen3-vl-flash")
+    persona.available = lambda: True
     os.environ["QQ_BOT_QWEN_VL_MODEL"] = "qwen3-vl-flash"
     check("默认开启看图", persona.vision_enabled() is True)
     os.environ["QQ_BOT_QWEN_VL_MODEL"] = "off"

@@ -44,6 +44,7 @@
 | 2026-10-07 | 动漫识别强化：图库指纹反查把群标注喂给模型 + 角色速查表（佩丽卡/阿米娅）+ 描述规避政治词 | [gallery-hints-anime](changes/2026-10-07-gallery-hints-anime.md) |
 | 2026-10-07 | 撤销图库反查（群标注不可靠）；接入 WD14 本地打标：已收录角色出「识别线索」，实测初音 0.99/周边 0.94 | [wd14-tagger](changes/2026-10-07-wd14-tagger.md) |
 | 2026-10-08 | `/来只` 查不到图时的提示去掉「层」的说法，并像 `/图库` 那样推荐相近关键词 | [random-image-no-result-copy](changes/2026-10-08-random-image-no-result-copy.md) |
+| 2026-10-08 | WD14 打标结果进日志（可观测）+ 按图片内容缓存省 2 秒；修一处依赖环境的测试断言 | [tagger-observability-and-cache](changes/2026-10-08-tagger-observability-and-cache.md) |
 
 ## 约定
 

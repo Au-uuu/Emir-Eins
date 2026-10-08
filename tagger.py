@@ -22,10 +22,12 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import hashlib
 import io
 import logging
 import os
 import threading
+from collections import OrderedDict
 
 log = logging.getLogger("qqbot.tagger")
 
@@ -39,6 +41,11 @@ MAX_TAGS = 4
 _lock = threading.Lock()
 _session = None  # (session, [(tag_id, name)...], [(tag_id, name)...], size)
 _failed = False
+
+# 打标结果缓存（LRU）：key = 图片内容 sha256，value = (character, copyright) 标签。
+# 条目只是一个短标签列表，内存开销可忽略；128 条足够覆盖群里反复转的那几十张图。
+_CACHE_MAX = 128
+_cache: "OrderedDict[str, tuple[list[str], list[str]]]" = OrderedDict()
 
 
 def model_dir() -> str:
@@ -148,10 +155,46 @@ def tag_image_sync(data: bytes) -> tuple[list[str], list[str]]:
     return hit_chars[:MAX_TAGS], hit_copies[:MAX_TAGS]
 
 
+def _fmt_tags(result: tuple[list[str], list[str]]) -> str:
+    """把打标结果拼成一行给人看的日志。"""
+    chars, copies = result
+    if not chars and not copies:
+        return f"无标签命中（阈值 {CHAR_THRESHOLD}）"
+    parts = []
+    if copies:
+        parts.append("作品=" + ",".join(copies))
+    if chars:
+        parts.append("角色=" + ",".join(chars))
+    return "；".join(parts)
+
+
 async def tag_image(data: bytes) -> tuple[list[str], list[str]]:
-    """线程池里跑推理；任何失败返回空对——打标是加分项，不能拖垮看图。"""
+    """
+    线程池里跑推理；任何失败返回空对——打标是加分项，不能拖垮看图。
+
+    结果按**图片内容哈希**缓存：同一张图重复出现（群里转同一张立绘/梗图很常见，
+    实测同一个人 20 秒内就重发过同一张）直接复用，省掉约 2 秒推理。
+    只缓存**真的跑过推理**的结果——模型缺失时结果恒为空对，没有缓存的意义。
+    """
+    key = hashlib.sha256(data).hexdigest()
+    hit = _cache.get(key)
+    if hit is not None:
+        _cache.move_to_end(key)
+        log.info("[打标] 缓存命中：%s", _fmt_tags(hit))
+        return hit
+
     try:
-        return await asyncio.to_thread(tag_image_sync, data)
+        result = await asyncio.to_thread(tag_image_sync, data)
     except Exception as exc:  # noqa: BLE001
         log.warning("WD14 打标失败：%s", exc)
         return [], []
+
+    if _session is not None:
+        _cache[key] = result
+        _cache.move_to_end(key)
+        while len(_cache) > _CACHE_MAX:
+            _cache.popitem(last=False)
+        # 打标结果必须可观测：否则「没认出角色」到底是模型不认、还是压根没命中标签，
+        # 从日志上完全看不出来（2026-10-08 排查时卡在这里）
+        log.info("[打标] %s", _fmt_tags(result))
+    return result
