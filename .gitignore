@@ -23,6 +23,9 @@ __pycache__/
 # 图片库数据（含用户上传的图片）
 data/
 
+# 离线打标模型（体积大，服务器上单独下载，见 tagger.py）
+models/
+
 # 临时测试数据
 _test_data/
 _test_cmd/
