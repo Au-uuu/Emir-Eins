@@ -26,10 +26,13 @@ from dotenv import load_dotenv
 
 import ark_news
 import help_image
+import kb
+import names
 import persona
 import sensitive
 import tagger
 import watchdog
+import websearch
 from chat_store import ChatStore
 from image_store import (
     ImageStore,
@@ -228,7 +231,8 @@ def _file_info_put(key: tuple[str, str], info: str) -> None:
 # 启动时把人格聊天的状态写进日志，运维一眼就能看出有没有生效
 if persona.available():
     log.info(
-        "人格聊天已启用：模型=%s，记忆 %d 条/会话", persona.model(), chat.max_messages
+        "人格聊天已启用：文本模型=%s，记忆 %d 条/会话",
+        persona.text_model(), chat.max_messages,
     )
     if persona.vision_enabled():
         log.info("看图已启用：视觉模型=%s（带图消息优先走视觉链路）", persona.vl_model())
@@ -537,6 +541,45 @@ def collect_image_attachments(message) -> list:
     return out
 
 
+_VIDEO_EXTS = (".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi")
+
+
+def _looks_like_video(content_type, filename, url) -> bool:
+    """判断是不是视频附件（content_type 优先，扩展名兜底）。"""
+    ct = (content_type or "").lower()
+    if ct.startswith("video/"):
+        return True
+    if (filename or "").lower().endswith(_VIDEO_EXTS):
+        return True
+    return (url or "").lower().split("?")[0].endswith(_VIDEO_EXTS)
+
+
+def collect_video_url(message) -> str:
+    """
+    取本条消息（或引用元素）里第一个视频附件的 URL；没有则返回空串。
+
+    两阶段看图模式下把视频直接交给视觉模型（GLM 支持 video_url）。QQ 是否会把群里
+    视频作为附件推给机器人取决于平台，取不到就当没有、不影响其它链路。
+    """
+    for att in getattr(message, "attachments", None) or []:
+        if _looks_like_video(
+            getattr(att, "content_type", ""),
+            getattr(att, "filename", ""),
+            getattr(att, "url", ""),
+        ):
+            return getattr(att, "url", "") or ""
+    raw = get_raw(message)
+    for el in raw.get("msg_elements") or []:
+        if not isinstance(el, dict):
+            continue
+        for att in el.get("attachments") or []:
+            if isinstance(att, dict) and att.get("url") and _looks_like_video(
+                att.get("content_type"), att.get("filename"), att.get("url")
+            ):
+                return att["url"]
+    return ""
+
+
 def quoted_content(message) -> str:
     """
     抽出「被引用消息」的平台展开文本（普通引用和合并转发卡片都适用）。
@@ -624,29 +667,48 @@ async def collect_vision_images(message) -> list[tuple[str, bytes]]:
 
 async def tagger_hints(images: list[tuple[str, bytes]]) -> str:
     """
-    WD14 打标：给视觉模型补「识别线索」（character/copyright 标签）。
+    离线打标：给视觉模型补「识别线索」（character/copyright 标签）。
+    打标模型见 tagger.py 的注册表（默认 Camie Tagger v2，可选 AnimeTimm）。
 
-    qwen3-vl 认不出 Danbooru 收录之外的新角色（终末地这类 2026 年的新游戏），
-    WD14 是同一堵墙的另一面——但它对已收录角色（几千个，含大量 gacha）的
-    「特征→标签」映射远比 qwen 稳。命中就拼线索，中文译名交给 qwen；
-    未命中/打标失败返回空串，零影响。
+    打标器训练集截止较早，**不覆盖 2025 年后的新作**——对魔裁这类新角色只会给最像
+    的近邻标签（实测把橘雪莉认成 hololive 的兔田佩克拉）。所以低置信候选只作「疑似」
+    列出、明确要求与画面核对，绝不当结论。未命中/打标失败返回空串，零影响。
     """
     try:
-        chars, copies = await tagger.tag_image(images[0][1])
+        chars, copies, cands = await tagger.tag_image_detail(images[0][1])
     except Exception as exc:  # noqa: BLE001
         log.info("[视觉] 打标失败：%s", exc)
         return ""
-    if not chars and not copies:
-        return ""
+    def _zh(tag: str) -> str:
+        cn = names.cn_name(tag)
+        return f"{tag}（{cn}）" if cn else tag
+
+    lines = []
     parts = []
     if copies:
-        parts.append("作品=" + ",".join(copies))
+        parts.append("作品=" + ",".join(_zh(t) for t in copies))
     if chars:
-        parts.append("角色=" + ",".join(chars))
-    return (
-        "（识别线索：本机离线打标器认为图中含 " + "；".join(parts) +
-        "。danbooru 标签仅供参考，与画面矛盾时以画面为准）\n"
-    )
+        parts.append("角色=" + ",".join(_zh(t) for t in chars))
+    if parts:
+        lines.append(
+            "（识别线索：本机离线打标器认为图中含 " + "；".join(parts) +
+            "。括号内为词库中文名，可直接采用；与画面矛盾时以画面为准）"
+        )
+    # 角色未过硬阈值：列出低置信候选，但明确它们是「疑似」、不是结论。
+    # 打标器训练集较旧，对 2025+ 新作只能给最像的近邻，误报率高。
+    if not chars and cands:
+        items = []
+        for name, score in cands:
+            cn = names.cn_name(name)
+            items.append(f"{name}（{cn}）({score:.2f})" if cn else f"{name}({score:.2f})")
+        lines.append(
+            "（疑似候选（未过硬阈值，**仅供核对、不是结论**；打标器不覆盖 2025 年后"
+            "的新作，画风/发色相近也可能误报，不符就完全忽略）："
+            + "、".join(items) + "）"
+        )
+    if not lines:
+        return ""
+    return "\n".join(lines) + "\n"
 
 
 def uploader_of(api) -> MediaUploader:
@@ -2047,10 +2109,12 @@ async def persona_reply(message, scope: str, content: str) -> None:
     人格聊天：把非指令文本交给角色模型，并维护该会话的上下文。
 
     完全被动——只在收到消息时才会走到这里，永远不会主动推送。
-    单聊「只发图片」也走这里（content 传 IMAGE_ONLY_PLACEHOLDER）。
+    单聊「只发图片/视频」也走这里（content 传 IMAGE_ONLY_PLACEHOLDER）。
 
-    带图消息（含只发图）优先走视觉模型，人设与纯文本链路共用同一张角色卡；
-    图取不下来 / 视觉关闭时自动退回纯文本行为。
+    默认：带图消息（含只发图）一次调用视觉模型，人设与纯文本链路共用同一张角色卡。
+    两阶段模式（persona.describe_mode()）：视觉模型只做客观描述，再由文本链路
+    （qwen-flash-character）转成人设回复；支持视频（交给支持 video_url 的视觉模型）。
+    图/视频取不下来、或视觉关闭时自动退回纯文本行为。
 
     三道静默：
       1. 用户这句话命中敏感词 → 不回，也不记进上下文
@@ -2062,9 +2126,11 @@ async def persona_reply(message, scope: str, content: str) -> None:
         return
 
     images = await collect_vision_images(message)
+    video_url = collect_video_url(message)
+    media = bool(images or video_url)
     image_only = content == IMAGE_ONLY_PLACEHOLDER
 
-    if image_only and not images:
+    if image_only and not media:
         # 人格未启用 / 没开看图 / 图下载失败都会落到这里——维持 2026-09-28
         # 的行为契约：不回复，只把占位写进上下文，让紧接着的下一句接得上
         await chat.append(scope, content, None)
@@ -2088,9 +2154,33 @@ async def persona_reply(message, scope: str, content: str) -> None:
     quote = quoted_content(message)
     if quote:
         model_text = f"（用户引用了下面这条消息提问：\n{quote}\n）\n{content}"
-    if images:
-        # WD14 打标线索：已收录角色的特征→标签映射，帮视觉模型报出角色名
-        hints = await tagger_hints(images)
+    # 本地知识库检索（RAG，轻量 BM25）：命中就拼进提示词，让事实更准
+    if content and content != IMAGE_ONLY_PLACEHOLDER:
+        kb_ctx = kb.context(content)
+        if kb_ctx:
+            model_text = kb_ctx + model_text
+    # 联网搜索（两步式）：命中时效性提问才搜；只把「事实摘要」注入，不塞检索原文
+    if content and content != IMAGE_ONLY_PLACEHOLDER and websearch.should_search(content):
+        summary = await asyncio.to_thread(websearch.search, content)
+        if summary:
+            model_text = websearch.wrap(summary) + model_text
+    # 离线打标线索（Camie）：已收录角色的特征→标签映射，帮模型报出角色名
+    hints = await tagger_hints(images) if images else ""
+
+    if media and persona.describe_mode():
+        # 两阶段：视觉模型（GLM）先客观描述，再交给文本链路（qwen）转人设。
+        desc = await persona.describe(images, video_url, hints)
+        if desc:
+            model_text = f"（视觉模型对这条内容的客观描述：\n{desc}\n）\n" + model_text
+            reply = await persona.generate(history, model_text)
+        elif images:
+            # 描述失败：退回单次视觉调用（仍带打标线索）
+            if hints:
+                model_text = hints + model_text
+            reply = await persona.generate_vision(history, model_text, images)
+        else:
+            reply = await persona.generate(history, model_text)
+    elif images:
         if hints:
             model_text = hints + model_text
         reply = await persona.generate_vision(history, model_text, images)
@@ -2289,7 +2379,7 @@ class MyClient(botpy.Client):
             # 只有 @ 没有任何内容 → 视为 /help；但 @ 了还带图且开了看图，
             # 是想让机器人看图，交给人格链路（没开看图则维持 /help）
             if not content:
-                if collect_image_attachments(message) and persona.vision_enabled():
+                if (collect_image_attachments(message) or collect_video_url(message)) and persona.vision_enabled():
                     await persona_reply(
                         message, f"group:{message.group_openid}", IMAGE_ONLY_PLACEHOLDER
                     )
@@ -2322,7 +2412,7 @@ class MyClient(botpy.Client):
             # 只 @ 了机器人、没写正文 → 与「群@」事件保持一致，给帮助；
             # @ 了还带图且开了看图则是想让它看图，交给人格链路
             if mentions_me:
-                if collect_image_attachments(message) and persona.vision_enabled():
+                if (collect_image_attachments(message) or collect_video_url(message)) and persona.vision_enabled():
                     await persona_reply(
                         message, f"group:{message.group_openid}", IMAGE_ONLY_PLACEHOLDER
                     )
@@ -2397,7 +2487,7 @@ class MyClient(botpy.Client):
             # 就能让模型「看着图」回复，图不可用时自动退回旧行为（只记占位）
             # 其余空内容（例如只发了个表情）→ 视为 /help（管理员给完整表）
             if not content:
-                if collect_image_attachments(message):
+                if collect_image_attachments(message) or collect_video_url(message):
                     await persona_reply(
                         message, f"c2c:{openid or 'unknown'}", IMAGE_ONLY_PLACEHOLDER
                     )

@@ -45,6 +45,20 @@
 | 2026-10-07 | 撤销图库反查（群标注不可靠）；接入 WD14 本地打标：已收录角色出「识别线索」，实测初音 0.99/周边 0.94 | [wd14-tagger](changes/2026-10-07-wd14-tagger.md) |
 | 2026-10-08 | `/来只` 查不到图时的提示去掉「层」的说法，并像 `/图库` 那样推荐相近关键词 | [random-image-no-result-copy](changes/2026-10-08-random-image-no-result-copy.md) |
 | 2026-10-08 | WD14 打标结果进日志（可观测）+ 按图片内容缓存省 2 秒；修一处依赖环境的测试断言 | [tagger-observability-and-cache](changes/2026-10-08-tagger-observability-and-cache.md) |
+| 2026-10-09 | 离线打标 WD14 → Camie Tagger v2：角色标签 2.6 万+、角色 F1 0.83，重写预处理与标签解析 | [camie-tagger](changes/2026-10-09-camie-tagger.md) |
+| 2026-10-09 | 打标注册表化：Camie 默认 + AnimeTimm swinv2_base 可选，补每标签 best_threshold；按服务器 4C/3.6G 选型 | [tagger-registry](changes/2026-10-09-tagger-registry.md) |
+| 2026-10-09 | 视觉链路可切厂商：文本(DashScope)/视觉(智谱 GLM-4.6V-Flash)分离配置，图片支持裸 base64 | [vision-vl-provider](changes/2026-10-09-vision-vl-provider.md) |
+| 2026-10-09 | 两阶段看图（可选 `QQ_BOT_VL_DESCRIBE=1`）：GLM 客观描述 → qwen 转人设；并支持视频识别 | [vision-vl-provider](changes/2026-10-09-vision-vl-provider.md) |
+| 2026-10-09 | 识别修复：删角色卡误导性速查表（陈千语→佩丽卡）；打标新增「低置信角色候选」软线索 | [anime-recognition-fixes](changes/2026-10-09-anime-recognition-fixes.md) |
+| 2026-10-09 | 角色译名接社区词库（Danbooru 中英对照）：修「curren_chan→当前酱」；卡片改为信任线索/接受同人差异 | [anime-name-dictionary](changes/2026-10-09-anime-name-dictionary.md) |
+| 2026-10-09 | 角色卡 §8 去掉「本机的自拍」措辞（不再提及自拍），改为中性表述 | [persona-no-selfie](changes/2026-10-09-persona-no-selfie.md) |
+| 2026-10-09 | 文本链路可切厂商：接入 DeepSeek（`QQ_BOT_TEXT_*` 覆盖，默认仍 qwen-flash-character） | [deepseek-provider](changes/2026-10-09-deepseek-provider.md) |
+| 2026-10-09 | 本地知识库检索（文字 RAG，轻量 BM25）：`data/kb/*.md` 资料注入提示词 | [local-kb-rag](changes/2026-10-09-local-kb-rag.md) |
+| 2026-10-09 | 知识库内容：从萌娘百科抓世界观+角色设定，用便宜 Qwen 模型整理（覆盖方舟/终末地/原神/赛马娘/星铁/R6围攻） | [kb-from-wiki](changes/2026-10-09-kb-from-wiki.md) |
+| 2026-10-09 | 角色卡：回复中不得提及「打标器/识别线索」，非动漫图直接无视线索（打标仍照跑） | [no-tagger-talk](changes/2026-10-09-no-tagger-talk.md) |
+| 2026-10-10 | 联网搜索（两步式）：命中时效性提问时单独检索、只注入事实摘要；角色模型切 qwen-flash | [web-search](changes/2026-10-10-web-search.md) |
+| 2026-10-10 | 看图行为重写：回应优先、打标线索弱化（KB 图像识别因误报已回退） | [image-reply-respond-first](changes/2026-10-10-image-reply-respond-first.md) |
+| 2026-10-10 | 知识库采集修复：resolve 改用「限定标题+links」（碧蓝航线 22→418）；模型池/--works/额度观测；扩面魔裁+大肥鱼 | [kb-build-fixes](changes/2026-10-10-kb-build-fixes.md) |
 
 ## 约定
 

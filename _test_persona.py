@@ -12,11 +12,27 @@ import types
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# 测试不联网、也不受服务器知识库影响：
+#   - 显式关掉联网搜索（否则「今天天气不错」这类用例会真的去检索）；
+#   - KB 指到空临时目录（否则服务器上已填充的 KB 会把资料拼进 prompt，断言原文就挂了）。
+# 放在 import bot 之前，且 python-dotenv 默认不覆盖已有环境变量，故 .env 里开了也没用。
+os.environ["QQ_BOT_WEBSEARCH"] = "0"
+os.environ["QQ_BOT_KB_DIR"] = tempfile.mkdtemp()
+
 import bot  # noqa: E402
 import persona  # noqa: E402
 import sensitive  # noqa: E402
 import tagger  # noqa: E402
 from chat_store import ChatStore  # noqa: E402
+
+
+# 看图兜底（打标不确定时）会调 persona.describe → 测试里 mock 成空串，避免真联网。
+# 需要描述内容的小节（两阶段）会各自覆盖它。
+async def _no_describe(images, video_url=None, hint_text=""):
+    return ""
+
+
+persona.describe = _no_describe
 
 failures = 0
 
@@ -241,6 +257,14 @@ async def main() -> int:
     # ---------------- 5. 看图链路 ----------------
     print("\n[5] 看图：带图消息走视觉模型，图不可用自动退回旧行为")
 
+    # ⚠️ 断言「默认值」前必须先把相关环境变量清掉：服务器 .env 可能配了 plus / 独立视觉厂商
+    #    （GLM）——直接读环境会拿到非默认值，导致本地过、服务器挂（同类坑踩过两次）。
+    _vl_env = {}
+    for _k in ("QQ_BOT_QWEN_VL_MODEL", "QQ_BOT_VL_MODEL", "QQ_BOT_VL_KEY",
+               "QQ_BOT_VL_URL", "QQ_BOT_VL_IMAGE_FORMAT", "QQ_BOT_VL_THINKING",
+               "QQ_BOT_VL_DESCRIBE", "QQ_BOT_VL_TIMEOUT", "QQ_BOT_VL_VIDEO_TIMEOUT"):
+        _vl_env[_k] = os.environ.pop(_k, None)
+
     # content 构造：纯文本 vs 多模态
     check("纯文本 content 保持字符串", persona._user_content("你好", []) == "你好")
     parts = persona._user_content("看看", [("image/png", b"png")])
@@ -252,20 +276,55 @@ async def main() -> int:
     )
 
     # 视觉模型配置
-    # ⚠️ 断言「默认值」前必须先把环境变量清掉：服务器 .env 里配的是 plus，
-    #    直接读环境会拿到非默认值 —— 这条曾在本地过、服务器挂（踩过第二次了）。
-    old_vl = os.environ.get("QQ_BOT_QWEN_VL_MODEL")
-    os.environ.pop("QQ_BOT_QWEN_VL_MODEL", None)
     check("未配置时视觉模型默认 qwen3-vl-flash", persona.vl_model() == "qwen3-vl-flash")
     persona.available = lambda: True
     os.environ["QQ_BOT_QWEN_VL_MODEL"] = "qwen3-vl-flash"
     check("默认开启看图", persona.vision_enabled() is True)
     os.environ["QQ_BOT_QWEN_VL_MODEL"] = "off"
     check("设为 off 可关闭看图", persona.vision_enabled() is False)
-    if old_vl is None:
-        os.environ.pop("QQ_BOT_QWEN_VL_MODEL", None)
-    else:
-        os.environ["QQ_BOT_QWEN_VL_MODEL"] = old_vl
+
+    # 视觉独立厂商（如智谱 GLM）：URL/KEY 必须成对，只配一个视为配置错误、禁用看图
+    os.environ.pop("QQ_BOT_QWEN_VL_MODEL", None)
+    os.environ["QQ_BOT_VL_MODEL"] = "glm-4.6v-flash"
+    os.environ["QQ_BOT_VL_URL"] = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+    check("只配 VL_URL → 禁用看图", persona.vision_enabled() is False)
+    os.environ["QQ_BOT_VL_KEY"] = "fake"
+    check("VL_URL+VL_KEY 成对 → 启用看图", persona.vision_enabled() is True)
+    os.environ["QQ_BOT_VL_IMAGE_FORMAT"] = "base64"
+    _p = persona._user_content("看看", [("image/png", b"png")])
+    check(
+        "智谱格式为裸 base64（无 data: 前缀）",
+        not _p[0]["image_url"]["url"].startswith("data:"),
+        _p[0]["image_url"]["url"][:16],
+    )
+
+    # 视频：作为 video_url 拼进 content
+    _v = persona._user_content("看看", [], "https://x/y.mp4")
+    check(
+        "视频 content 带 video_url",
+        isinstance(_v, list)
+        and any(
+            p.get("type") == "video_url" and p["video_url"]["url"].endswith(".mp4")
+            for p in _v
+        ),
+        str(_v),
+    )
+
+    # 两阶段开关
+    check("默认关闭两阶段", persona.describe_mode() is False)
+    os.environ["QQ_BOT_VL_DESCRIBE"] = "1"
+    check("QQ_BOT_VL_DESCRIBE=1 开启两阶段", persona.describe_mode() is True)
+
+    # 超时：图片/视频分开（视频理解很慢）
+    check("图片视觉超时默认 60", persona.vl_timeout(False) == 60)
+    check("视频视觉超时默认 180", persona.vl_timeout(True) == 180)
+
+    # 恢复环境
+    for _k, _v in _vl_env.items():
+        if _v is None:
+            os.environ.pop(_k, None)
+        else:
+            os.environ[_k] = _v
 
     class ImgMessage(FakeMessage):
         def __init__(self, content: str = "", atts=None):
@@ -349,6 +408,86 @@ async def main() -> int:
     h = await bot.chat.history("c2c:V5")
     check("图片下载失败 → 记占位", len(h) == 1 and h[0]["content"] == bot.IMAGE_ONLY_PLACEHOLDER)
     bot.store.download = png_download
+
+    # 视频附件识别（两阶段模式下交给支持 video_url 的视觉模型）
+    check(
+        "视频附件被识别",
+        bot.collect_video_url(
+            ImgMessage("", [make_att(ct="video/mp4", url="http://v/x.mp4")])
+        )
+        == "http://v/x.mp4",
+    )
+    check(
+        "图片附件不会被当成视频",
+        bot.collect_video_url(ImgMessage("", [make_att()])) == "",
+    )
+
+    # 两阶段：describe_mode 打开时，视觉模型只描述、文本链路转人设
+    os.environ["QQ_BOT_VL_DESCRIBE"] = "1"
+    orig_describe = persona.describe
+    desc_seen = {}
+
+    async def fake_describe(images, video_url=None, hint_text=""):
+        desc_seen["images"], desc_seen["video"], desc_seen["hint"] = images, video_url, hint_text
+        return "图中是初音未来（蓝绿双马尾），坐在栏杆上。"
+
+    async def fake_generate(history, text):
+        desc_seen["text"] = text
+        return "【分析】检测到初音未来。【肯定】本机也在。"
+
+    vcalls = {"n": 0}
+
+    async def no_vision(history, text, images):
+        vcalls["n"] += 1
+        raise AssertionError("两阶段模式不该走单次视觉链路")
+
+    persona.describe = fake_describe
+    persona.generate = fake_generate
+    persona.generate_vision = no_vision
+    m = ImgMessage("这是谁", [make_att()])
+    await bot.persona_reply(m, "group:TWO1", "这是谁")
+    check("两阶段：describe 收到图片", len(desc_seen.get("images", [])) == 1)
+    check(
+        "两阶段：描述拼进文本链路输入",
+        "客观描述" in desc_seen.get("text", "")
+        and "初音未来" in desc_seen.get("text", ""),
+        desc_seen.get("text", "")[:70],
+    )
+    check("两阶段：回复来自文本链路", "本机也在" in m.text, m.text)
+    check("两阶段：未走单次视觉链路", vcalls["n"] == 0)
+
+    # describe 失败 → 退回单次视觉调用
+    async def fail_describe(images, video_url=None, hint_text=""):
+        return None
+
+    persona.describe = fail_describe
+    persona.generate = fail_generate
+    persona.generate_vision = fake_vision
+    m = ImgMessage("这是谁", [make_att()])
+    await bot.persona_reply(m, "group:TWO2", "这是谁")
+    check("describe 失败 → 退回单次视觉", "看到" in m.text, m.text)
+
+    persona.describe = orig_describe
+    os.environ.pop("QQ_BOT_VL_DESCRIBE", None)
+
+    # 重试：429/5xx 这类瞬时错误会重试（免费 GLM 会突发 429）
+    orig_req = persona._request_sync
+    rcalls = {"n": 0}
+
+    def flaky_request(*args, **kwargs):
+        rcalls["n"] += 1
+        if rcalls["n"] == 1:
+            raise persona._Retryable("HTTP 429")
+        return "重试成功"
+
+    persona._request_sync = flaky_request
+    got = await persona._request_with_retry("p", "k", [], "t", delay=0.01)
+    check(
+        "429 会重试并成功",
+        got == "重试成功" and rcalls["n"] == 2,
+        f"{got!r} n={rcalls['n']}",
+    )
+    persona._request_sync = orig_req
 
     imgs = await bot.collect_vision_images(
         ImgMessage("", [make_att(ct="image/gif")])
@@ -489,13 +628,13 @@ async def main() -> int:
     persona.vision_enabled = lambda: True
     bot.store.download = png_download
 
-    # ---------------- 7. WD14 打标线索 ----------------
-    print("\n[7] WD14 打标线索")
+    # ---------------- 7. 离线打标线索 ----------------
+    print("\n[7] 离线打标线索（Camie）")
 
     async def fake_tag(data):
-        return ["hatsune_miku"], ["vocaloid"]
+        return ["hatsune_miku"], ["vocaloid"], []
 
-    tagger.tag_image = fake_tag
+    tagger.tag_image_detail = fake_tag
     m = ImgMessage("这是谁", [make_att()])
     await bot.persona_reply(m, "group:TH1", "这是谁")
     check(
@@ -505,9 +644,9 @@ async def main() -> int:
     )
 
     async def empty_tag(data):
-        return [], []
+        return [], [], []
 
-    tagger.tag_image = empty_tag
+    tagger.tag_image_detail = empty_tag
     m = ImgMessage("这是谁", [make_att(url="http://img/b2.png")])
     await bot.persona_reply(m, "group:TH2", "这是谁")
     check("无标签则无线索前缀", "识别线索" not in cap.get("text", ""))
