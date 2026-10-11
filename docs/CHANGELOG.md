@@ -59,6 +59,7 @@
 | 2026-10-10 | 联网搜索（两步式）：命中时效性提问时单独检索、只注入事实摘要；角色模型切 qwen-flash | [web-search](changes/2026-10-10-web-search.md) |
 | 2026-10-10 | 看图行为重写：回应优先、打标线索弱化（KB 图像识别因误报已回退） | [image-reply-respond-first](changes/2026-10-10-image-reply-respond-first.md) |
 | 2026-10-10 | 知识库采集修复：resolve 改用「限定标题+links」（碧蓝航线 22→418）；模型池/--works/额度观测；扩面魔裁+大肥鱼 | [kb-build-fixes](changes/2026-10-10-kb-build-fixes.md) |
+| 2026-10-11 | 知识库纳入坚果云异地备份（`deploy/backup-nutstore.sh` 增 `kb/`） | [kb-backup](changes/2026-10-11-kb-backup.md) |
 
 ## 约定
 

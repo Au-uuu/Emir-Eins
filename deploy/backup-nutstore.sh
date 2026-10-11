@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
 # 坚果云 WebDAV 增量备份：/opt/qqbot/data -> nutstore:qqbot-backup/
+#   （images/ + thumbs/ + images.db + kb/；其中 kb 是知识库条目，服务器上的唯一副本）
 #
 # 设计要点：
 #   1. 图片按 SHA-256 命名、内容永不改变，所以增量上传只会传新增文件
@@ -54,6 +55,15 @@ for d in images thumbs; do
         --retries 5 --low-level-retries 10 \
         -v $DRY || rc=$?
 done
+
+# --- 1b) 知识库：文本条目（约 1MB），是服务器上的唯一副本，也一并异地备份 ---
+if [ -d "$DATA_DIR/kb" ]; then
+    echo "--- 同步 kb（知识库）---"
+    rclone copy "$DATA_DIR/kb" "$REMOTE/kb" \
+        --transfers 2 --checkers 4 \
+        --retries 5 --low-level-retries 10 \
+        -v $DRY || rc=$?
+fi
 
 # --- 2) 数据库：先取一致性快照，再上传 ---
 echo "--- 数据库快照 ---"
