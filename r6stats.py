@@ -191,6 +191,7 @@ def query(platform: str, name: str) -> dict | None:
     # 当前排位面板
     rank = rp = max_rp = None
     boards = ((prof.get("stats") or {}).get("platform_families_full_profiles") or [{}])[0]
+    profile_id = boards.get("profile_id")
     for b in boards.get("board_ids_full_profiles") or []:
         if b.get("board_id") == "ranked":
             fp = (b.get("full_profiles") or [{}])[0].get("profile") or {}
@@ -257,6 +258,7 @@ def query(platform: str, name: str) -> dict | None:
         "platform_label": PLATFORM_LABEL.get(plat, plat),
         "avatar": avatar,
         "rank_icon": rank_icon,
+        "profile_id": profile_id,
         "level": account.get("level"),
         "rank": rank or "未定级",
         "rp": rp,
@@ -325,6 +327,21 @@ def _int_env(name: str, default: int) -> int:
         return int(_env(name) or default)
     except ValueError:
         return default
+
+
+TN_PLATFORM = {"uplay": "pc", "psn": "psn", "xbl": "xbox"}
+
+
+def site_urls(platform: str, name: str, profile_id: str | None = None) -> list[str]:
+    """R6Tracker / stats.cc 的个人主页链接（看每场对局等更多历史用）。"""
+    from urllib.parse import quote
+
+    tn = TN_PLATFORM.get(platform or "", "pc")
+    n = quote(name or "")
+    out = [f"R6Tracker　https://r6.tracker.network/profile/{tn}/{n}"]
+    if profile_id:
+        out.append(f"stats.cc　　https://stats.cc/siege/{n}/{quote(profile_id)}")
+    return out
 
 
 def image_enabled() -> bool:

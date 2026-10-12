@@ -44,6 +44,7 @@ from image_store import (
     sample_frames_png,
 )
 from push_store import PushStore
+from r6_bind import R6BindStore
 from raw_events import get_raw, install as install_raw_events
 from uploader import MediaUploader, UploadError
 
@@ -191,6 +192,9 @@ chat = ChatStore()
 # 游戏公告推送：每群 × 每游戏独立开关 + 已见公告去重（默认全部关闭）
 push_store = PushStore()
 
+# R6 战绩查询：用户 openid → 绑定的 R6 昵称（`/r6` 直查用）
+bind_store = R6BindStore()
+
 # ---------------------------------------------------------------------------
 # 图片上传结果（file_info）缓存
 #
@@ -270,6 +274,8 @@ HELP_TEXT = (
     "　　　　/公告 开|关 明日方舟|终末地|全部　版本更新推送\n"
     "　　　　/公告 查 [游戏]　看最新公告（含活动类）\n"
     "【R6】/r6 [平台] 昵称　彩虹六号战绩（平台 pc/ps/xbox，默认 pc）\n"
+    "　　　/r6绑定 [平台] 昵称　绑定后直接 /r6 直查　/r6解绑　解除\n"
+    "　　　/r6网站　给出 R6Tracker / stats.cc 个人主页链接（看每场对局）\n"
     "\n"
     "快捷：只有「添加 / 删除 / 来只」可省略斜杠（添加、删除需引用图片），\n"
     "　　　其余指令必须带「/」。图库名不能是纯数字。\n"
@@ -2215,25 +2221,78 @@ async def persona_reply(message, scope: str, content: str) -> None:
     log.info("[人格] 已回复 scope=%s: %s", scope, reply[:40])
 
 
-async def do_r6(message, api, scope: str, scene_id: str, text: str) -> None:
-    """R6 战绩查询。用法：/r6 [平台] 昵称（平台 pc/ps/xbox，默认 pc）。
+def _r6_split(args: str) -> tuple[str, str]:
+    """把「[平台] 昵称」拆成 (platform, name)；平台缺省 uplay。"""
+    parts = args.split(maxsplit=1)
+    if len(parts) == 2 and r6stats.normalize_platform(parts[0]):
+        return r6stats.normalize_platform(parts[0]), parts[1].strip()
+    return "uplay", args
 
-    优先发**图片**（卡片更整齐），渲染/上传失败才退回文本。
+
+async def do_r6(message, api, scope: str, scene_id: str, text: str) -> None:
+    """R6 战绩查询。
+
+    /r6 [平台] 昵称　查指定玩家（平台 pc/ps/xbox，默认 pc）
+    /r6绑定 [平台] 昵称　绑定后直接 /r6 直查
+    /r6解绑　解除绑定
+    /r6网站　给出 R6Tracker / stats.cc 个人主页链接（看每场对局）
+
+    成品优先发**图片卡片**，渲染/上传失败退回文本；网址类用文本（可点）。
     """
     if not r6stats.enabled():
         await message.reply(content="R6 战绩查询未启用（服务器缺 QQ_BOT_R6_KEY）")
         return
     m = R6_RE.match(text)
     args = ((m.group(1) if m else "") or "").strip()
-    parts = args.split(maxsplit=1)
-    platform, name = None, args
-    if len(parts) == 2 and r6stats.normalize_platform(parts[0]):
-        platform, name = parts[0], parts[1].strip()
-    if not name:
-        await message.reply(content="用法：/r6 [平台] 昵称　平台：pc / ps / xbox（默认 pc）")
+    low = args.lower()
+    openid = author_openid(message)
+
+    if low in ("解绑", "unbind"):
+        ok = await bind_store.unbind(openid)
+        await message.reply(content="已解绑。" if ok else "你还没绑定过。")
         return
-    log.info("[R6] 查询 platform=%s name=%s", platform or "uplay", name[:32])
-    data = await asyncio.to_thread(r6stats.query, platform or "uplay", name)
+
+    if low in ("网站", "网址", "链接", "site", "url"):
+        b = await bind_store.get(openid)
+        if not b:
+            await message.reply(content="先绑定才能给你个人主页链接：/r6绑定 [平台] 昵称")
+            return
+        urls = r6stats.site_urls(b["platform"], b["name"], b.get("profile_id"))
+        await message.reply(
+            content=f"🎮 R6 战绩网站 · {b['name']}\n" + "\n".join(urls)
+            + "\n（每场对局等更多历史看上面两个站）"
+        )
+        return
+
+    if low.startswith("绑定"):
+        platform, name = _r6_split(args[2:].strip())
+        if not name:
+            await message.reply(content="用法：/r6绑定 [平台] 昵称　平台：pc / ps / xbox（默认 pc）")
+            return
+        data = await asyncio.to_thread(r6stats.query, platform, name)
+        if not data:
+            await message.reply(content=f"没查到「{name}」——确认昵称/平台后再绑。")
+            return
+        await bind_store.bind(openid, platform, name, data.get("profile_id"))
+        await message.reply(
+            content=f"已绑定：{name}（{data['platform_label']} · {data['rank']}）。"
+            f"之后直接发 /r6 就能查；换群/单聊需各自绑定。"
+        )
+        return
+
+    if not args:
+        b = await bind_store.get(openid)
+        if not b:
+            await message.reply(
+                content="你还没绑定。用 /r6绑定 [平台] 昵称 绑定后，直接发 /r6 就能查。"
+            )
+            return
+        platform, name = b["platform"], b["name"]
+    else:
+        platform, name = _r6_split(args)
+
+    log.info("[R6] 查询 platform=%s name=%s", platform, name[:32])
+    data = await asyncio.to_thread(r6stats.query, platform, name)
     if not data:
         await message.reply(
             content=f"没查到「{name}」——确认昵称拼写，或平台（pc/ps/xbox）是否正确。"

@@ -28,7 +28,7 @@ RANKS = [
 ]
 PROFILE = {
     "player": {"nameOnPlatform": "MacieJay", "platformType": "uplay"},
-    "stats": {"platform_families_full_profiles": [{"board_ids_full_profiles": [
+    "stats": {"platform_families_full_profiles": [{"profile_id": "pid-test", "board_ids_full_profiles": [
         {"board_id": "standard", "full_profiles": [{"profile": {"rank_points": 0}}]},
         {"board_id": "ranked", "full_profiles": [{"profile": {
             "rank_points": 4347, "max_rank_points": 4442}}]},
@@ -114,6 +114,14 @@ check("解析最高 RP", q and q["max_rp"] == 4442)
 check("历史最高（RP 时代）", q and q.get("peak") and q["peak"]["code"] == "Y11S3"
       and int(q["peak"]["rp"]) == 4442)
 check("RP 序列旧→新", q and [int(v) for _, v in q["rp_history"]] == [4000, 4347])
+check("解析 profile_id（stats.cc 链接用）", q and q.get("profile_id") == "pid-test")
+
+urls = r6stats.site_urls("uplay", "MacieJay", "pid-test")
+check("R6Tracker 链接", any("r6.tracker.network/profile/pc/MacieJay" in u for u in urls), str(urls))
+check("stats.cc 链接", any("stats.cc/siege/MacieJay/pid-test" in u for u in urls), str(urls))
+check("xbl → xbox 平台映射",
+      any("/profile/xbox/X" in u for u in r6stats.site_urls("xbl", "X", None)))
+check("无 profile_id 时只给 R6Tracker", len(r6stats.site_urls("uplay", "X", None)) == 1)
 check("解析等级/总时长", q and q["level"] == 3512 and q["total_hours"] == 5706)
 check("本赛季取最新（Y11S3）", q and q["season"]["code"] == "Y11S3")
 check("本赛季胜负/胜率", q and q["season"]["wins"] == 112 and q["season"]["losses"] == 107
