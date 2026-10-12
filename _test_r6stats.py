@@ -195,7 +195,7 @@ check("render_card 不抛异常（有 PIL 则出 PNG）",
 
 before = calls["n"]
 r6stats.query("pc", "MacieJay")
-check("5 分钟内命中缓存不重复请求", calls["n"] == before, f"{before}->{calls['n']}")
+check("30 分钟内命中缓存不重复请求", calls["n"] == before, f"{before}->{calls['n']}")
 
 # --- stale-while-revalidate：过期缓存也**秒回**，刷新丢给后台线程 ---
 print("\n-- 缓存策略（stale-while-revalidate）--")

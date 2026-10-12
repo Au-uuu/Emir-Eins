@@ -312,7 +312,7 @@ HELP_TOPICS = {
         "\n"
         "卡片内容：段位 / RP / 等级 / 时长、历史最高、本赛季 K/D·胜负、\n"
         "　　　　　近几季段位、RP 走势、常用干员。\n"
-        "数据来源：R6 Arenyze，同一玩家 5 分钟内走缓存（所以第一次查会慢几秒）。"
+        "数据来源：R6 Arenyze，同一玩家 30 分钟内走缓存。"
     ),
     "图库": (
         "【图库 · 完整用法】\n"
@@ -2350,7 +2350,7 @@ async def _r6_fetch(message, platform: str, name: str):
         # 冷查询要等 Arenyze 现拉数据（实测 3~9 秒），先回一句，别让用户以为机器人卡死了。
         # 被动回复每条消息最多能回 5 次，多这一句不心疼。
         await message.reply(
-            content=f"🔍 正在查 {name}…（第一次查要等几秒，之后 5 分钟内秒回）"
+            content=f"🔍 正在查 {name}…"
         )
     try:
         data = await asyncio.to_thread(r6stats.query, platform, name)
