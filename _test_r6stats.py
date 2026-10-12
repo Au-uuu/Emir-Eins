@@ -195,7 +195,14 @@ check("render_card 不抛异常（有 PIL 则出 PNG）",
 
 before = calls["n"]
 r6stats.query("pc", "MacieJay")
-check("30 分钟内命中缓存不重复请求", calls["n"] == before, f"{before}->{calls['n']}")
+check("5 分钟内命中缓存不重复请求", calls["n"] == before, f"{before}->{calls['n']}")
+
+r6stats._quota.clear()
+check("平时缓存时长 = CACHE_TTL", r6stats.effective_ttl() == r6stats.CACHE_TTL)
+r6stats._quota["day_remaining"] = 5
+check("额度见底时自动拉长（保命，别把额度打光）",
+      r6stats.effective_ttl() >= 1800, f"{r6stats.effective_ttl():.0f}s")
+r6stats._quota.clear()
 
 # --- stale-while-revalidate：过期缓存也**秒回**，刷新丢给后台线程 ---
 print("\n-- 缓存策略（stale-while-revalidate）--")

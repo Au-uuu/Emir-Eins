@@ -33,10 +33,10 @@ DEFAULT_PLATFORM = "uplay"
 TOP_OPERATORS = 3   # 文字版展示的干员数
 CARD_OPERATORS = 6  # 图片卡片展示的干员数
 SEASON_HISTORY = 3
-CACHE_TTL = 1800.0  # 秒；同一玩家 30 分钟内不重复请求
-# ⚠️ 免费额度是 **300 次/天**（另有 20/分、120/时）。每次冷查要打 2 个接口，
-# 所以 TTL 不能太短——5 分钟的话，一个常被查的玩家一天就能吃掉 500+ 次。
-# 另外被限流时会记下恢复时间（见 _note_blocked），期间不再白打接口。
+CACHE_TTL = 300.0  # 秒；同一玩家 5 分钟内不重复请求
+# ⚠️ 免费额度是 **2,000 次/月**（另有 20/分、120/时、300/天的突发上限）。
+# 每次冷查要打 2 个接口，TTL 越短额度消耗越快——按 5 分钟算，一个被频繁查询的
+# 玩家一天就能吃掉几百次。被限流时会记下恢复时间（见 _note_blocked），期间不再白打。
 
 PLATFORM_ALIASES = {
     "pc": "uplay", "uplay": "uplay", "ubi": "uplay", "steam": "uplay", "ubisoft": "uplay",
@@ -147,6 +147,21 @@ def _note_blocked(headers) -> None:
 def blocked_for() -> float:
     """还在限流中的剩余秒数（0 = 没被限流）。"""
     return max(0.0, _blocked_until - time.time())
+
+
+# 额度快到见底时，把缓存临时拉长——宁可数据旧一点，也别把额度打光（打光当天就
+# 彻底查不了了）。平时就是 CACHE_TTL，用户感知不到。
+_STRETCH_TTL = 1800.0
+_STRETCH_BELOW = 40
+
+
+def effective_ttl() -> float:
+    """当前该用的缓存时长：额度宽裕 = CACHE_TTL，快见底 = 拉长。"""
+    with _quota_lock_view():
+        day_left = _quota.get("day_remaining")
+    if isinstance(day_left, int) and day_left <= _STRETCH_BELOW:
+        return max(CACHE_TTL, _STRETCH_TTL)
+    return CACHE_TTL
 
 
 def quota() -> dict:
@@ -387,7 +402,7 @@ def query(platform: str, name: str) -> dict | None:
     ck = (plat, name.lower())
     hit = _cache.get(ck)
     if hit:
-        if time.time() - hit[0] < CACHE_TTL:
+        if time.time() - hit[0] < effective_ttl():
             return hit[1]
         _refresh_async(ck, name, plat)
         return hit[1]
