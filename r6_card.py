@@ -1,10 +1,8 @@
-"""把 R6 战绩画成一张卡片图（PIL 手绘，纯色底、不用背景图）。
+"""把 R6 战绩画成一张**深色卡片图**（PIL 手绘，不用背景图）。
 
-内容：头像（**带内存缓存**）+ 名字 + 段位（中文）+ 本赛季 + 近几季（右侧并列「历史最高」）
-+ 近一月 RP 折线图 + 常用干员（三列网格）。
-
-素材（头像 / 段位图标）优先联网取并缓存，**取不到就降级**（头像画灰圆、没有图标就不画），
-绝不因素材缺失让整张图失败。对外只有 `render(q) -> bytes | None`。
+风格：深底 + 面板（圆角）+ R6 橙强调色 + 色块统计 + 渐变折线。素材只保留**头像**和
+**段位图标**（联网取，带内存缓存与重试；取不到就降级，不让整张图失败）。
+对外只有 `render(q) -> bytes | None`。
 """
 
 from __future__ import annotations
@@ -23,20 +21,20 @@ log = logging.getLogger("qqbot.r6card")
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) qqbot-r6/1.0"}
 
 W = 1000
-PAD = 44
-BG = (250, 250, 252)
-FG = (33, 33, 40)
-SUB = (122, 126, 136)
-FOOT = (170, 174, 182)
-ACCENT = (243, 148, 24)   # R6 橙
-LINE = (228, 229, 234)
-AVATAR = 152
-CHART_H = 168
+PAD = 30
+BG = (15, 17, 23, 255)
+PANEL = (25, 28, 36, 255)
+PANEL_HI = (34, 38, 48, 255)
+FG = (238, 240, 245, 255)
+SUB = (156, 162, 176, 255)
+DIM = (108, 114, 128, 255)
+ACCENT = (242, 169, 59, 255)
+GREEN = (92, 200, 126, 255)
+RED = (232, 96, 96, 255)
+CHIP_BG = (242, 169, 59, 46)
 
-_CACHE: dict[str, bytes] = {}   # 素材内存缓存：URL -> 原始字节（头像/段位图标，进程内长期有效）
-
-
-_FONTS: dict[int, object] = {}   # 字号 -> 字体对象（_load_cjk_font 每次都会重读字体文件，必须缓存）
+_CACHE: dict[str, bytes] = {}   # 头像/段位图标的内存缓存（URL -> 原始字节）
+_FONTS: dict[int, object] = {}  # 字号 -> 字体（_load_cjk_font 每次重读文件，必须缓存）
 
 
 def _font(size: int):
@@ -53,7 +51,7 @@ def _fetch(url: str | None) -> Image.Image | None:
     raw = _CACHE.get(url)
     if raw is None:
         last = None
-        for _ in range(3):   # 育碧头像偶尔超时，重试几次
+        for _ in range(3):
             try:
                 raw = urllib.request.urlopen(
                     urllib.request.Request(url, headers=UA), timeout=20
@@ -73,22 +71,37 @@ def _fetch(url: str | None) -> Image.Image | None:
         return None
 
 
-def _circle(img: Image.Image, size: int) -> Image.Image:
-    img = img.resize((size, size), Image.LANCZOS)
+def _rounded(img: Image.Image, size: int, radius: int) -> Image.Image:
+    img = img.resize((size, size), Image.LANCZOS).convert("RGBA")
     mask = Image.new("L", (size, size), 0)
-    ImageDraw.Draw(mask).ellipse((0, 0, size - 1, size - 1), fill=255)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, size - 1, size - 1), radius=radius, fill=255)
     out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     out.paste(img, (0, 0), mask)
     return out
 
 
-def _hr(d, y: int) -> int:
-    d.line((PAD, y, W - PAD, y), fill=LINE, width=2)
-    return y + 26
+def _section(d, y: int, title: str, right: str | None = None) -> int:
+    d.rectangle((PAD + 22, y + 5, PAD + 27, y + 27), fill=ACCENT)
+    d.text((PAD + 40, y), title, font=_font(25), fill=FG)
+    if right:
+        w = d.textlength(right, font=_font(21))
+        d.text((W - PAD - 24 - w, y + 5), right, font=_font(21), fill=DIM)
+    return y + 42
+
+
+def _tiles(d, y: int, x0: int, x1: int, items: list, h: int = 92) -> int:
+    n = len(items)
+    gap = 12
+    tw = (x1 - x0 - gap * (n - 1)) // n
+    for i, (label, value, color) in enumerate(items):
+        tx = x0 + i * (tw + gap)
+        d.rounded_rectangle((tx, y, tx + tw, y + h), radius=12, fill=PANEL_HI)
+        d.text((tx + 16, y + 14), label, font=_font(20), fill=DIM)
+        d.text((tx + 16, y + 44), value, font=_font(32), fill=color)
+    return y + h
 
 
 def _chart(canvas, d, x0: int, y0: int, w: int, h: int, series: list) -> int:
-    """画近一月 RP 折线图；返回下一个 y。"""
     pts = []
     for ts, rp in series or []:
         try:
@@ -96,7 +109,7 @@ def _chart(canvas, d, x0: int, y0: int, w: int, h: int, series: list) -> int:
         except Exception:  # noqa: BLE001
             continue
     if len(pts) < 2:
-        d.text((x0, y0), "RP 数据不足", font=_font(24), fill=SUB)
+        d.text((x0, y0), "RP 数据不足", font=_font(22), fill=DIM)
         return y0 + 40
 
     t0, t1 = pts[0][0], pts[-1][0]
@@ -108,25 +121,31 @@ def _chart(canvas, d, x0: int, y0: int, w: int, h: int, series: list) -> int:
     pad_v = (hi - lo) * 0.18
     lo_v, hi_v = lo - pad_v, hi + pad_v
 
-    d.rectangle((x0, y0, x0 + w, y0 + h), outline=(236, 237, 242), width=2)
-
     def px(dt):
-        return x0 + (dt - t0).total_seconds() / span * w
+        return (dt - t0).total_seconds() / span * w
 
     def py(v):
-        return y0 + h - (v - lo_v) / (hi_v - lo_v) * h
+        return h - (v - lo_v) / (hi_v - lo_v) * h
 
     poly = [(px(dt), py(v)) for dt, v in pts]
-    d.line(poly, fill=ACCENT, width=4, joint="curve")
-    for X, Y in (poly[0], poly[-1]):
-        d.ellipse((X - 6, Y - 6, X + 6, Y + 6), fill=ACCENT)
 
-    d.text((x0 + 8, y0 + 4), f"{int(hi)}", font=_font(22), fill=SUB)
-    d.text((x0 + 8, y0 + h - 28), f"{int(lo)}", font=_font(22), fill=SUB)
-    d.text((x0 + 8, y0 + h + 8), t0.strftime("%m/%d"), font=_font(22), fill=FOOT)
+    overlay = Image.new("RGBA", (w + 2, h + 2), (0, 0, 0, 0))
+    ImageDraw.Draw(overlay).polygon(
+        [(x, y) for x, y in poly] + [(w, h), (0, h)], fill=(242, 169, 59, 52)
+    )
+    canvas.alpha_composite(overlay, (x0, y0))
+
+    d.line([(x0 + x, y0 + y) for x, y in poly], fill=ACCENT, width=4, joint="curve")
+    ex, ey = x0 + poly[-1][0], y0 + poly[-1][1]
+    d.ellipse((ex - 6, ey - 6, ex + 6, ey + 6), fill=ACCENT)
+
+    d.text((x0 + 2, y0 - 2), f"{int(hi)}", font=_font(20), fill=DIM)
+    d.text((x0 + 2, y0 + h - 24), f"{int(lo)}", font=_font(20), fill=DIM)
+    d.text((x0 + 2, y0 + h + 8), t0.strftime("%m/%d"), font=_font(20), fill=DIM)
     end = t1.strftime("%m/%d")
-    d.text((x0 + w - 8 - len(end) * 12, y0 + h + 8), end, font=_font(22), fill=FOOT)
-    return y0 + h + 44
+    d.text((x0 + w - 4 - d.textlength(end, font=_font(20)), y0 + h + 8), end,
+           font=_font(20), fill=DIM)
+    return y0 + h + 42
 
 
 def render(q: dict) -> bytes | None:
@@ -140,119 +159,139 @@ def render(q: dict) -> bytes | None:
 
 
 def _render(q: dict) -> bytes:
-    canvas = Image.new("RGB", (W, 2100), BG)
-    d = ImageDraw.Draw(canvas)
-    y = PAD
+    canvas = Image.new("RGBA", (W, 2600), BG)
+    d = ImageDraw.Draw(canvas, "RGBA")
+    y = 22
 
-    # ---------- 头部：头像 + 名字 + 平台/等级/时长 ----------
-    avatar = _fetch(q.get("avatar")) or Image.new("RGBA", (AVATAR, AVATAR), (208, 212, 220))
-    avatar = _circle(avatar, AVATAR)
-    canvas.paste(avatar, (PAD, y), avatar)
-    tx = PAD + AVATAR + 30
-    d.text((tx, y - 8), q["name"], font=_font(46), fill=FG)
+    # ================= 头部面板 =================
+    hp = 176
+    d.rounded_rectangle((PAD, y, W - PAD, y + hp), radius=18, fill=PANEL)
+    av = _fetch(q.get("avatar"))
+    asz = 132
+    ax, ay = PAD + 22, y + 22
+    if av is not None:
+        canvas.alpha_composite(_rounded(av, asz, 16), (ax, ay))
+    else:
+        d.rounded_rectangle((ax, ay, ax + asz, ay + asz), radius=16, fill=PANEL_HI)
+
+    tx = ax + asz + 24
+    d.text((tx, ay + 2), q["name"], font=_font(40), fill=FG)
+    # 平台色块 + 等级 + 时长
+    cw = int(d.textlength(q["platform_label"], font=_font(20))) + 22
+    d.rounded_rectangle((tx, ay + 62, tx + cw, ay + 90), radius=8, fill=(242, 169, 59, 240))
+    d.text((tx + 11, ay + 66), q["platform_label"], font=_font(20), fill=(24, 27, 34))
     meta = []
     if q.get("level"):
         meta.append(f"等级 {q['level']}")
     if q.get("total_hours"):
         meta.append(f"总时长 {int(q['total_hours'])}h")
-    d.text((tx, y + 54), q["platform_label"] + ("　·　" + "　·　".join(meta) if meta else ""),
-           font=_font(26), fill=SUB)
+    d.text((tx + cw + 14, ay + 66), "　".join(meta), font=_font(20), fill=SUB)
     peak = q.get("peak")
     if peak:
         pk = f"历史最高　{peak.get('code') or '—'}　{peak.get('rank') or '—'}"
         if peak.get("rp") is not None:
             pk += f"　{int(peak['rp'])} RP"
-        d.text((tx, y + 92), pk, font=_font(24), fill=FOOT)
-    y += AVATAR + 30
-    y = _hr(d, y)
+        d.text((tx, ay + 104), pk, font=_font(21), fill=DIM)
+    y += hp + 16
 
-    # ---------- 本赛季（右上角放赛季标识，填满那一栏） ----------
+    # ================= 本赛季面板 =================
+    s = q.get("season") or {}
+    ph = 42 + 74 + 92 + 44 + 22
+    d.rounded_rectangle((PAD, y, W - PAD, y + ph), radius=18, fill=PANEL)
+    y += 20
+    season_right = f"{s.get('code', '')}　{s.get('name', '')}".strip() or None
+    y = _section(d, y, "本赛季", season_right)
+
+    # 段位行：[图标] 段位名（橙） + 右侧 RP
     icon = _fetch(q.get("rank_icon"))
-    ix = PAD
+    ix = PAD + 24
     if icon is not None:
-        try:
-            ic = icon.resize((62, 62), Image.LANCZOS)
-            canvas.paste(ic, (ix, y - 10), ic)
-            ix += 76
-        except Exception:  # noqa: BLE001
-            pass
-    seg = q.get("rank") or "未定级"
+        canvas.alpha_composite(_rounded(icon, 58, 8), (ix, y - 6))
+        ix += 74
+    d.text((ix, y), q.get("rank") or "未定级", font=_font(36), fill=ACCENT)
     if q.get("rp") is not None:
-        seg += f"　{int(q['rp'])} RP"
-    d.text((ix, y - 2), seg, font=_font(34), fill=ACCENT)
+        rp = f"{int(q['rp'])} RP"
+        d.text((W - PAD - 24 - d.textlength(rp, font=_font(30)), y + 4), rp,
+               font=_font(30), fill=ACCENT)
+    y += 74
 
-    s = q.get("season")
-    if s and s.get("matches"):
-        head = f"本赛季 {s['code']} {s['name']}".rstrip()
-        hw = d.textlength(head, font=_font(28))
-        d.text((W - PAD - hw, y + 6), head, font=_font(28), fill=FG)
-        y += 54
-        wl = (f"W/L {int(s['wins'])}/{int(s['losses'])}"
-              if s.get("wins") is not None else "")
-        pct = f"（{s['win_rate']:.0f}%）" if s.get("win_rate") is not None else ""
-        parts = [f"{int(s['matches'])} 场", f"{wl}{pct}"]
-        if s.get("kd") is not None:
-            parts.append(f"KD {s['kd']:.2f}")
-        if s.get("hs") is not None:
-            parts.append(f"HS {s['hs']:.0f}%")
-        d.text((PAD + 14, y), "　".join(parts), font=_font(26), fill=SUB)
-        y += 44
-    else:
-        y += 56
-    y = _hr(d, y)
+    wr = s.get("win_rate")
+    wl = (f"{int(s['wins'])}/{int(s['losses'])}"
+          if s.get("wins") is not None else "—")
+    tiles = []
+    if s.get("kd") is not None:
+        tiles.append(("K/D", f"{s['kd']:.2f}", FG))
+    if wr is not None:
+        tiles.append(("胜率", f"{wr:.0f}%", FG))
+    if s.get("matches") is not None:
+        tiles.append(("场次", f"{int(s['matches'])}", FG))
+    if s.get("hours"):
+        tiles.append(("时长", f"{int(s['hours'])}h", FG))
+    if tiles:
+        y = _tiles(d, y, PAD + 24, W - PAD - 24, tiles[:4])
+    y += 16
+    d.text((PAD + 24, y), f"W/L　{wl}", font=_font(23), fill=SUB)
+    y += 32
+    y += 20
 
-    # ---------- 近几季（每行：赛季/段位/RP/KD/KDA/胜率/爆头率） ----------
-    hist = [x for x in (q.get("seasons") or []) if x.get("matches")][:3]
+    # ================= 近几季面板 =================
+    hist = [x for x in (q.get("seasons") or []) if x.get("matches")][:4]
     if hist:
-        d.text((PAD, y), "近几季", font=_font(30), fill=FG)
-        y += 48
+        ph = 20 + 42 + len(hist) * 40 + 18
+        d.rounded_rectangle((PAD, y, W - PAD, y + ph), radius=18, fill=PANEL)
+        y += 20
+        y = _section(d, y, "近几季")
         for x in hist:
             rp = f"{int(x['rp'])} RP" if x.get("rp") is not None else "—"
-            kd = f"{x['kd']:.2f}" if x.get("kd") is not None else "—"
-            wl = (f"{int(x['wins'])}/{int(x['losses'])}"
-                  if x.get("wins") is not None else "—")
+            kd = f"KD {x['kd']:.2f}" if x.get("kd") is not None else "KD —"
+            w = (f"W/L {int(x['wins'])}/{int(x['losses'])}"
+                 if x.get("wins") is not None else "W/L —")
             pct = f"（{x['win_rate']:.0f}%）" if x.get("win_rate") is not None else ""
-            hs = f"{x['hs']:.0f}%" if x.get("hs") is not None else "—"
-            d.text((PAD + 14, y), str(x.get("code") or "—"), font=_font(24), fill=SUB)
-            d.text((PAD + 120, y), str(x.get("rank") or "—"), font=_font(24), fill=FG)
-            d.text((PAD + 268, y), rp, font=_font(24), fill=SUB)
-            d.text((PAD + 400, y), f"KD {kd}", font=_font(24), fill=SUB)
-            d.text((PAD + 500, y), f"W/L {wl}{pct}", font=_font(24), fill=SUB)
-            d.text((PAD + 780, y), f"HS {hs}", font=_font(24), fill=SUB)
+            d.text((PAD + 24, y), str(x.get("code") or "—"), font=_font(24), fill=SUB)
+            d.text((PAD + 140, y), str(x.get("rank") or "—"), font=_font(24), fill=FG)
+            d.text((PAD + 320, y), rp, font=_font(24), fill=ACCENT)
+            d.text((PAD + 470, y), kd, font=_font(24), fill=SUB)
+            d.text((PAD + 600, y), f"{w}{pct}", font=_font(24), fill=SUB)
             y += 40
-        y += 6
-    y = _hr(d, y)
+        y += 18
+    y += 16
 
-    # ---------- 近一月 RP 走势 ----------
+    # ================= RP 走势面板 =================
     if len(q.get("rp_history") or []) >= 2:
-        d.text((PAD, y), "近一月 RP 走势", font=_font(30), fill=FG)
-        y += 50
-        y = _chart(canvas, d, PAD, y, W - PAD * 2, CHART_H, q["rp_history"])
-        y = _hr(d, y)
+        ph = 20 + 42 + 168 + 42 + 10
+        d.rounded_rectangle((PAD, y, W - PAD, y + ph), radius=18, fill=PANEL)
+        y += 20
+        y = _section(d, y, "近一月 RP 走势")
+        y = _chart(canvas, d, PAD + 44, y, W - PAD * 2 - 68, 168, q["rp_history"])
+        y += 30
+    y += 16
 
-    # ---------- 常用干员（三列网格） ----------
-    ops = [o for o in (q.get("operators") or []) if o.get("kd") is not None]
+    # ================= 常用干员面板 =================
+    ops = [o for o in (q.get("operators") or []) if o.get("kd") is not None][:6]
     if ops:
-        d.text((PAD, y), "常用干员", font=_font(30), fill=FG)
-        y += 50
-        col_w = (W - PAD * 2) // 3
+        rows = (len(ops) + 2) // 3
+        ph = 20 + 42 + rows * 76 + 8
+        d.rounded_rectangle((PAD, y, W - PAD, y + ph), radius=18, fill=PANEL)
+        y += 20
+        y = _section(d, y, "常用干员")
+        col_w = (W - PAD * 2 - 48) // 3
         for i, o in enumerate(ops):
             col, row = i % 3, i // 3
-            cx = PAD + col * col_w
-            cy = y + row * 92
-            d.text((cx, cy), str(o["name"]), font=_font(28), fill=FG)
+            cx = PAD + 24 + col * col_w
+            cy = y + row * 76
+            d.text((cx, cy), str(o["name"]), font=_font(26), fill=FG)
             sub = f"KD {o['kd']:.2f}"
             if o.get("win") is not None:
                 sub += f"　胜 {o['win']:.0f}%"
-            d.text((cx, cy + 38), sub, font=_font(24), fill=SUB)
-        y += ((len(ops) + 2) // 3) * 92 + 6
+            d.text((cx, cy + 34), sub, font=_font(22), fill=SUB)
+        y += rows * 76 + 8
+        y += 20
+    y += 10
 
-    # ---------- 页脚 ----------
-    y += 4
-    d.text((PAD, y), "数据：R6 Arenyze", font=_font(22), fill=FOOT)
-    y += 42
+    d.text((PAD + 4, y), "数据：R6 Arenyze", font=_font(20), fill=DIM)
+    y += 36
 
-    canvas = canvas.crop((0, 0, W, min(y, canvas.height)))
+    canvas = canvas.crop((0, 0, W, min(y, canvas.height))).convert("RGB")
     buf = io.BytesIO()
     canvas.save(buf, format="PNG", optimize=True)
     return buf.getvalue()
