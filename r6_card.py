@@ -176,27 +176,27 @@ def _render(q: dict) -> bytes:
 
     tx = ax + asz + 24
     d.text((tx, ay + 2), q["name"], font=_font(40), fill=FG)
-    # 平台色块 + 等级 + 时长
+    # 平台色块 + 等级 + 时长（与色块垂直居中）
     cw = int(d.textlength(q["platform_label"], font=_font(20))) + 22
-    d.rounded_rectangle((tx, ay + 62, tx + cw, ay + 90), radius=8, fill=(242, 169, 59, 240))
-    d.text((tx + 11, ay + 66), q["platform_label"], font=_font(20), fill=(24, 27, 34))
+    d.rounded_rectangle((tx, ay + 56, tx + cw, ay + 84), radius=8, fill=(242, 169, 59, 240))
+    d.text((tx + 11, ay + 60), q["platform_label"], font=_font(20), fill=(24, 27, 34))
     meta = []
     if q.get("level"):
         meta.append(f"等级 {q['level']}")
     if q.get("total_hours"):
         meta.append(f"总时长 {int(q['total_hours'])}h")
-    d.text((tx + cw + 14, ay + 66), "　".join(meta), font=_font(20), fill=SUB)
+    d.text((tx + cw + 14, ay + 60), "　".join(meta), font=_font(20), fill=SUB)
     peak = q.get("peak")
     if peak:
         pk = f"历史最高　{peak.get('code') or '—'}　{peak.get('rank') or '—'}"
         if peak.get("rp") is not None:
             pk += f"　{int(peak['rp'])} RP"
-        d.text((tx, ay + 104), pk, font=_font(21), fill=DIM)
+        d.text((tx, ay + 96), pk, font=_font(21), fill=DIM)
     y += hp + 16
 
     # ================= 本赛季面板 =================
     s = q.get("season") or {}
-    ph = 42 + 74 + 92 + 44 + 22
+    ph = 42 + 74 + 92 + 26
     d.rounded_rectangle((PAD, y, W - PAD, y + ph), radius=18, fill=PANEL)
     y += 20
     season_right = f"{s.get('code', '')}　{s.get('name', '')}".strip() or None
@@ -216,8 +216,6 @@ def _render(q: dict) -> bytes:
     y += 74
 
     wr = s.get("win_rate")
-    wl = (f"{int(s['wins'])}/{int(s['losses'])}"
-          if s.get("wins") is not None else "—")
     tiles = []
     if s.get("kd") is not None:
         tiles.append(("K/D", f"{s['kd']:.2f}", FG))
@@ -225,14 +223,13 @@ def _render(q: dict) -> bytes:
         tiles.append(("胜率", f"{wr:.0f}%", FG))
     if s.get("matches") is not None:
         tiles.append(("场次", f"{int(s['matches'])}", FG))
-    if s.get("hours"):
-        tiles.append(("时长", f"{int(s['hours'])}h", FG))
+    if s.get("wins") is not None:
+        tiles.append(("胜场", f"{int(s['wins'])}", GREEN))
+    if s.get("losses") is not None:
+        tiles.append(("败场", f"{int(s['losses'])}", RED))
     if tiles:
-        y = _tiles(d, y, PAD + 24, W - PAD - 24, tiles[:4])
-    y += 16
-    d.text((PAD + 24, y), f"W/L　{wl}", font=_font(23), fill=SUB)
-    y += 32
-    y += 20
+        y = _tiles(d, y, PAD + 24, W - PAD - 24, tiles[:5])
+    y += 26
 
     # ================= 近几季面板 =================
     hist = [x for x in (q.get("seasons") or []) if x.get("matches")][:4]
