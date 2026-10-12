@@ -1,14 +1,15 @@
 """把 R6 战绩画成一张卡片图（PIL 手绘，纯色底、不用背景图）。
 
-素材：头像（`account.profilePicture`）、当前段位图标（RP 历史最新一条的 `imageUrl`）。
-两者都优先联网取，**取不到就降级**（头像画成灰圆、没有图标就不画），绝不因素材缺失
-让整张图失败。字体复用 image_store 的 CJK 字体加载。
+内容：头像（**带内存缓存**）+ 名字 + 段位（中文）+ 本赛季 + 近几季（右侧并列「历史最高」）
++ 近一月 RP 折线图 + 常用干员（三列网格）。
 
-对外只有一个 `render(q) -> bytes | None`；失败返回 None，调用方退回文本。
+素材（头像 / 段位图标）优先联网取并缓存，**取不到就降级**（头像画灰圆、没有图标就不画），
+绝不因素材缺失让整张图失败。对外只有 `render(q) -> bytes | None`。
 """
 
 from __future__ import annotations
 
+import datetime as _dt
 import io
 import logging
 import urllib.request
@@ -26,26 +27,49 @@ PAD = 44
 BG = (250, 250, 252)
 FG = (33, 33, 40)
 SUB = (122, 126, 136)
-FOOT = (168, 172, 180)
+FOOT = (170, 174, 182)
 ACCENT = (243, 148, 24)   # R6 橙
 LINE = (228, 229, 234)
 AVATAR = 152
+CHART_H = 168
+
+_CACHE: dict[str, bytes] = {}   # 素材内存缓存：URL -> 原始字节（头像/段位图标，进程内长期有效）
+
+
+_FONTS: dict[int, object] = {}   # 字号 -> 字体对象（_load_cjk_font 每次都会重读字体文件，必须缓存）
 
 
 def _font(size: int):
-    return _load_cjk_font(size)
+    f = _FONTS.get(size)
+    if f is None:
+        f = _load_cjk_font(size)
+        _FONTS[size] = f
+    return f
 
 
-def _fetch(url: str | None):
+def _fetch(url: str | None) -> Image.Image | None:
     if not url:
         return None
+    raw = _CACHE.get(url)
+    if raw is None:
+        last = None
+        for _ in range(3):   # 育碧头像偶尔超时，重试几次
+            try:
+                raw = urllib.request.urlopen(
+                    urllib.request.Request(url, headers=UA), timeout=20
+                ).read()
+                break
+            except Exception as exc:  # noqa: BLE001
+                last = exc
+                raw = None
+        if raw is None:
+            log.info("[R6卡] 素材下载失败：%s", last)
+            return None
+        _CACHE[url] = raw
     try:
-        raw = urllib.request.urlopen(
-            urllib.request.Request(url, headers=UA), timeout=15
-        ).read()
         return Image.open(io.BytesIO(raw)).convert("RGBA")
     except Exception as exc:  # noqa: BLE001
-        log.info("[R6卡] 素材下载失败：%s", exc)
+        log.info("[R6卡] 素材解析失败：%s", exc)
         return None
 
 
@@ -58,8 +82,54 @@ def _circle(img: Image.Image, size: int) -> Image.Image:
     return out
 
 
+def _hr(d, y: int) -> int:
+    d.line((PAD, y, W - PAD, y), fill=LINE, width=2)
+    return y + 26
+
+
+def _chart(canvas, d, x0: int, y0: int, w: int, h: int, series: list) -> int:
+    """画近一月 RP 折线图；返回下一个 y。"""
+    pts = []
+    for ts, rp in series or []:
+        try:
+            pts.append((_dt.datetime.fromisoformat(ts), float(rp)))
+        except Exception:  # noqa: BLE001
+            continue
+    if len(pts) < 2:
+        d.text((x0, y0), "RP 数据不足", font=_font(24), fill=SUB)
+        return y0 + 40
+
+    t0, t1 = pts[0][0], pts[-1][0]
+    span = max((t1 - t0).total_seconds(), 1.0)
+    lo = min(v for _, v in pts)
+    hi = max(v for _, v in pts)
+    if hi <= lo:
+        hi = lo + 1
+    pad_v = (hi - lo) * 0.18
+    lo_v, hi_v = lo - pad_v, hi + pad_v
+
+    d.rectangle((x0, y0, x0 + w, y0 + h), outline=(236, 237, 242), width=2)
+
+    def px(dt):
+        return x0 + (dt - t0).total_seconds() / span * w
+
+    def py(v):
+        return y0 + h - (v - lo_v) / (hi_v - lo_v) * h
+
+    poly = [(px(dt), py(v)) for dt, v in pts]
+    d.line(poly, fill=ACCENT, width=4, joint="curve")
+    for X, Y in (poly[0], poly[-1]):
+        d.ellipse((X - 6, Y - 6, X + 6, Y + 6), fill=ACCENT)
+
+    d.text((x0 + 8, y0 + 4), f"{int(hi)}", font=_font(22), fill=SUB)
+    d.text((x0 + 8, y0 + h - 28), f"{int(lo)}", font=_font(22), fill=SUB)
+    d.text((x0 + 8, y0 + h + 8), t0.strftime("%m/%d"), font=_font(22), fill=FOOT)
+    end = t1.strftime("%m/%d")
+    d.text((x0 + w - 8 - len(end) * 12, y0 + h + 8), end, font=_font(22), fill=FOOT)
+    return y0 + h + 44
+
+
 def render(q: dict) -> bytes | None:
-    """画卡片；失败返回 None。"""
     if not q:
         return None
     try:
@@ -70,15 +140,14 @@ def render(q: dict) -> bytes | None:
 
 
 def _render(q: dict) -> bytes:
-    canvas = Image.new("RGB", (W, 1800), BG)
+    canvas = Image.new("RGB", (W, 2100), BG)
     d = ImageDraw.Draw(canvas)
     y = PAD
 
-    # ---------- 头部：头像 + 名字 + 平台/等级/时长 + 段位 ----------
+    # ---------- 头部：头像 + 名字 + 平台/等级/时长 ----------
     avatar = _fetch(q.get("avatar")) or Image.new("RGBA", (AVATAR, AVATAR), (208, 212, 220))
     avatar = _circle(avatar, AVATAR)
     canvas.paste(avatar, (PAD, y), avatar)
-
     tx = PAD + AVATAR + 30
     d.text((tx, y - 6), q["name"], font=_font(46), fill=FG)
     meta = []
@@ -86,76 +155,93 @@ def _render(q: dict) -> bytes:
         meta.append(f"等级 {q['level']}")
     if q.get("total_hours"):
         meta.append(f"总时长 {int(q['total_hours'])}h")
-    line2 = q["platform_label"] + ("　·　" + "　·　".join(meta) if meta else "")
-    d.text((tx, y + 62), line2, font=_font(26), fill=SUB)
+    d.text((tx, y + 62), q["platform_label"] + ("　·　" + "　·　".join(meta) if meta else ""),
+           font=_font(26), fill=SUB)
+    y += AVATAR + 30
+    y = _hr(d, y)
 
-    ry = y + 112
+    # ---------- 段位 + 本赛季（合并成一块） ----------
     icon = _fetch(q.get("rank_icon"))
-    ix = tx
+    ix = PAD
     if icon is not None:
         try:
-            icon = icon.resize((58, 58), Image.LANCZOS)
-            canvas.paste(icon, (ix, ry - 8), icon)
-            ix += 70
+            ic = icon.resize((62, 62), Image.LANCZOS)
+            canvas.paste(ic, (ix, y - 12), ic)
+            ix += 76
         except Exception:  # noqa: BLE001
             pass
     seg = q.get("rank") or "未定级"
     if q.get("rp") is not None:
         seg += f"　{int(q['rp'])} RP"
     if q.get("max_rp") is not None:
-        seg += f"　（最高 {int(q['max_rp'])}）"
-    d.text((ix, ry), seg, font=_font(32), fill=ACCENT)
+        seg += f"（历史最高 {int(q['max_rp'])}）"
+    d.text((ix, y - 4), seg, font=_font(34), fill=ACCENT)
 
-    y += AVATAR + 30
-    d.line((PAD, y, W - PAD, y), fill=LINE, width=2)
-    y += 26
-
-    # ---------- 本赛季 ----------
     s = q.get("season")
     if s and s.get("matches"):
-        d.text((PAD, y), f"本赛季 {s['code']} {s['name']}".rstrip(), font=_font(30), fill=FG)
-        y += 48
-        wr = f"{int(s['wins'])} 胜 {int(s['losses'])} 负" if s.get("wins") is not None else ""
+        wr = f"{int(s['wins'])}胜{int(s['losses'])}负" if s.get("wins") is not None else ""
         pct = f"（{s['win_rate']:.0f}%）" if s.get("win_rate") is not None else ""
         kd = f"　KD {s['kd']:.2f}" if s.get("kd") is not None else ""
-        d.text((PAD + 14, y), f"{int(s['matches'])} 场　{wr}{pct}{kd}", font=_font(27), fill=SUB)
-        y += 54
+        d.text((PAD, y + 58), f"本赛季 {s['code']} {s['name']}".rstrip(), font=_font(28), fill=FG)
+        d.text((PAD + 14, y + 100), f"{int(s['matches'])} 场　{wr}{pct}{kd}", font=_font(26), fill=SUB)
+        y += 150
+    else:
+        y += 76
+    y = _hr(d, y)
 
-    # ---------- 近几季 ----------
+    # ---------- 近几季（左）+ 历史最高（右） ----------
     hist = [x for x in (q.get("seasons") or []) if x.get("matches")][:3]
-    if hist:
-        d.line((PAD, y, W - PAD, y), fill=LINE, width=2)
-        y += 22
+    peak = q.get("peak")
+    if hist or peak:
         d.text((PAD, y), "近几季", font=_font(30), fill=FG)
+        px_right = PAD + 556
+        if peak:
+            d.text((px_right, y), "历史最高", font=_font(30), fill=FG)
         y += 48
+        first_row_y = y
         for x in hist:
             rp = f"{int(x['rp'])} RP" if x.get("rp") is not None else "—"
             kd = f"KD {x['kd']:.2f}" if x.get("kd") is not None else "KD —"
             d.text((PAD + 14, y), str(x.get("code") or "—"), font=_font(27), fill=SUB)
-            d.text((PAD + 200, y), str(x.get("rank") or "—"), font=_font(27), fill=FG)
-            d.text((PAD + 540, y), rp, font=_font(27), fill=SUB)
-            d.text((PAD + 730, y), kd, font=_font(27), fill=SUB)
+            d.text((PAD + 130, y), str(x.get("rank") or "—"), font=_font(27), fill=FG)
+            d.text((PAD + 300, y), rp, font=_font(27), fill=SUB)
+            d.text((PAD + 420, y), kd, font=_font(27), fill=SUB)
             y += 44
-        y += 6
+        if peak:
+            d.text((px_right, first_row_y), str(peak.get("code") or "—"), font=_font(27), fill=SUB)
+            d.text((px_right + 96, first_row_y), str(peak.get("rank") or "—"), font=_font(27), fill=FG)
+            d.text((px_right + 232, first_row_y), f"{int(peak['rp'])} RP", font=_font(27), fill=ACCENT)
+        y += 8
+    y = _hr(d, y)
 
-    # ---------- 常用干员 ----------
+    # ---------- 近一月 RP 走势 ----------
+    if len(q.get("rp_history") or []) >= 2:
+        d.text((PAD, y), "近一月 RP 走势", font=_font(30), fill=FG)
+        y += 50
+        y = _chart(canvas, d, PAD, y, W - PAD * 2, CHART_H, q["rp_history"])
+        y = _hr(d, y)
+
+    # ---------- 常用干员（三列网格） ----------
     ops = [o for o in (q.get("operators") or []) if o.get("kd") is not None]
     if ops:
-        d.line((PAD, y, W - PAD, y), fill=LINE, width=2)
-        y += 22
         d.text((PAD, y), "常用干员", font=_font(30), fill=FG)
-        y += 48
-        for o in ops:
-            w = f"胜 {o['win']:.0f}%" if o.get("win") is not None else ""
-            d.text((PAD + 14, y), str(o["name"]), font=_font(27), fill=FG)
-            d.text((PAD + 320, y), f"KD {o['kd']:.2f}", font=_font(27), fill=SUB)
-            d.text((PAD + 540, y), w, font=_font(27), fill=SUB)
-            y += 44
+        y += 50
+        col_w = (W - PAD * 2) // 3
+        for i, o in enumerate(ops):
+            col, row = i % 3, i // 3
+            cx = PAD + col * col_w
+            cy = y + row * 92
+            d.text((cx, cy), str(o["name"]), font=_font(28), fill=FG)
+            sub = f"KD {o['kd']:.2f}"
+            if o.get("win") is not None:
+                sub += f"　胜 {o['win']:.0f}%"
+            d.text((cx, cy + 38), sub, font=_font(24), fill=SUB)
+        y += ((len(ops) + 2) // 3) * 92 + 6
 
     # ---------- 页脚 ----------
-    y += 8
+    y += 4
     d.text((PAD, y), "数据：R6 Arenyze", font=_font(22), fill=FOOT)
-    y += 40
+    y += 42
 
     canvas = canvas.crop((0, 0, W, min(y, canvas.height)))
     buf = io.BytesIO()

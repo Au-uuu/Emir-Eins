@@ -34,18 +34,24 @@ PROFILE = {
             "rank_points": 4347, "max_rank_points": 4442}}]},
     ]}]},
     "account": {"level": 3512},
+    "history": {"data": {"history": {"data": [
+        ["2026-10-02T10:00:00+00:00", {"value": 4347, "metadata": {"rank": "Diamond 2"}}],
+        ["2026-10-01T10:00:00+00:00", {"value": 4000, "metadata": {"rank": "Diamond 2"}}],
+    ]}}},
 }
 FULL = {"fullStats": {
     "data": {"metadata": {"currentSeason": 43}, "segments": [
-        {"stats": {"rankPoints": {"value": 4000}, "kdRatio": {"value": 1.05},
+        {"stats": {"rankPoints": {"value": 4000}, "maxRankPoints": {"value": 4000},
+                   "kdRatio": {"value": 1.05},
                    "matchesPlayed": {"value": 200}, "matchesWon": {"value": 100},
                    "matchesLost": {"value": 99}},
-         "metadata": {"shortName": "Y11S2", "seasonName": "Old"},
+         "metadata": {"shortName": "Y11S2", "seasonName": "Old", "rankType": "rp"},
          "attributes": {"season": 42, "gamemode": "pvp_ranked"}},
-        {"stats": {"rankPoints": {"value": 4347}, "kdRatio": {"value": 1.08},
+        {"stats": {"rankPoints": {"value": 4347}, "maxRankPoints": {"value": 4442},
+                   "kdRatio": {"value": 1.08},
                    "matchesPlayed": {"value": 220}, "matchesWon": {"value": 112},
                    "matchesLost": {"value": 107}, "timePlayed": {"value": 1331994718}},
-         "metadata": {"shortName": "Y11S3", "seasonName": "Split Fire"},
+         "metadata": {"shortName": "Y11S3", "seasonName": "Split Fire", "rankType": "rp"},
          "attributes": {"season": 43, "gamemode": "pvp_ranked"}},
     ]},
     "operators": [
@@ -84,6 +90,8 @@ check("未知平台→None", r6stats.normalize_platform("switch") is None)
 
 check("段位映射 4347→Diamond 2", r6stats.rank_name(4347) == "Diamond 2")
 check("段位映射 0→Unranked", r6stats.rank_name(0) == "Unranked")
+check("段位中文化 Diamond 3→钻石 3", r6stats._zh_rank("Diamond 3") == "钻石 3")
+check("段位中文化 Legend Division→传奇", r6stats._zh_rank("Legend Division") == "传奇")
 
 os.environ.pop("QQ_BOT_R6_KEY", None)
 check("未配置 key → query 返回 None", r6stats.query("uplay", "MacieJay") is None)
@@ -94,8 +102,11 @@ check("已启用", r6stats.enabled() is True)
 
 q = r6stats.query("pc", "MacieJay")
 check("查询返回结果", isinstance(q, dict))
-check("解析段位/RP", q and q["rank"] == "Diamond 2" and q["rp"] == 4347)
+check("解析段位/RP", q and q["rank"] == "钻石 2" and q["rp"] == 4347)
 check("解析最高 RP", q and q["max_rp"] == 4442)
+check("历史最高（RP 时代）", q and q.get("peak") and q["peak"]["code"] == "Y11S3"
+      and int(q["peak"]["rp"]) == 4442)
+check("RP 序列旧→新", q and [int(v) for _, v in q["rp_history"]] == [4000, 4347])
 check("解析等级/总时长", q and q["level"] == 3512 and q["total_hours"] == 5706)
 check("本赛季取最新（Y11S3）", q and q["season"]["code"] == "Y11S3")
 check("本赛季胜负/胜率", q and q["season"]["wins"] == 112 and q["season"]["losses"] == 107
@@ -104,12 +115,12 @@ check("历史赛季不含本赛季", q and all(s["code"] != "Y11S3" for s in q["
 check("干员按回合排序", q and q["operators"][0]["name"] == "Pulse")
 
 text = r6stats.format_reply(q)
-check("排版含昵称/段位", "MacieJay" in text and "Diamond 2" in text)
+check("排版含昵称/段位", "MacieJay" in text and "钻石 2" in text)
 check("排版含本赛季 KD", "Y11S3" in text and "KD 1.08" in text)
 check("排版含常用干员", "Pulse" in text)
 
 card = r6stats.format_card_text(q)
-check("卡片含姓名/段位/本赛季", "MacieJay" in card and "Diamond 2" in card and "Y11S3" in card)
+check("卡片含姓名/段位/本赛季", "MacieJay" in card and "钻石 2" in card and "Y11S3" in card)
 check("卡片含近几季/常用干员", "近几季" in card and "常用干员" in card and "Pulse" in card)
 
 img = r6stats.render_card(q)

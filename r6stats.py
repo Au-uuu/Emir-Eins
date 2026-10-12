@@ -24,7 +24,8 @@ log = logging.getLogger("qqbot.r6stats")
 
 BASE = "https://public-api.arenyze.com/r6/api"
 DEFAULT_PLATFORM = "uplay"
-TOP_OPERATORS = 3
+TOP_OPERATORS = 3   # 文字版展示的干员数
+CARD_OPERATORS = 6  # 图片卡片展示的干员数
 SEASON_HISTORY = 3
 CACHE_TTL = 300.0  # 秒；同一玩家 5 分钟内不重复请求（省额度）
 
@@ -107,6 +108,25 @@ def rank_name(rp) -> str | None:
     return None
 
 
+# 段位名中文化（长词在前，避免 "Legend Division" 被 "Legend" 先截）
+_RANK_ZH = [
+    ("Legend Division", "传奇"), ("Unranked", "未定级"), ("Copper", "紫铜"),
+    ("Bronze", "青铜"), ("Silver", "白银"), ("Gold", "黄金"), ("Platinum", "铂金"),
+    ("Emerald", "翡翠"), ("Diamond", "钻石"), ("Champion", "冠军"), ("Legend", "传奇"),
+]
+
+
+def _zh_rank(name: str | None) -> str | None:
+    """把 "Diamond 3" 这类英文段位名换成中文（保留数字）。"""
+    if not name:
+        return name
+    low = name.lower()
+    for en, zh in _RANK_ZH:
+        if low.startswith(en.lower()):
+            return zh + name[len(en):]
+    return name
+
+
 def _season_of(seg: dict) -> dict:
     st = seg.get("stats") or {}
     meta = seg.get("metadata") or {}
@@ -120,8 +140,10 @@ def _season_of(seg: dict) -> dict:
     return {
         "code": meta.get("shortName") or meta.get("name") or "",
         "name": meta.get("seasonName") or meta.get("name") or "",
-        "rank": rank_name(rp),
+        "rank": _zh_rank(rank_name(rp)),
         "rp": rp,
+        "max_rp": _num(st.get("maxRankPoints")),
+        "rank_type": meta.get("rankType"),
         "kd": _num(st.get("kdRatio")),
         "matches": matches,
         "wins": wins,
@@ -172,7 +194,7 @@ def query(platform: str, name: str) -> dict | None:
             rp, max_rp = _num(fp.get("rank_points")), _num(fp.get("max_rank_points"))
             break
     if rank is None:
-        rank = rank_name(rp)
+        rank = _zh_rank(rank_name(rp))
 
     fs = full.get("fullStats") or {}
     # 只取「排位 + 具体赛季」的分段：同一赛季还有事件/休闲/标准等分段，混进来会串赛季。
@@ -203,6 +225,29 @@ def query(platform: str, name: str) -> dict | None:
         })
     operators.sort(key=lambda x: -(x.get("rounds") or 0))
 
+    # 历史最高：只在「RP 时代」（rank_type=rp）里比——MMR 时代数值不可比
+    peak = None
+    for x in seasons:
+        if x.get("rank_type") != "rp" or x.get("max_rp") is None:
+            continue
+        if peak is None or x["max_rp"] > peak["rp"]:
+            peak = {
+                "code": x["code"],
+                "rank": _zh_rank(rank_name(x["max_rp"])),
+                "rp": x["max_rp"],
+            }
+
+    # RP 随时间变化（近一月折线图用）；history 是「新→旧」，翻成「旧→新」
+    rp_history = []
+    if isinstance(hist_raw, list):
+        for e in reversed(hist_raw):
+            try:
+                v = _num(e[1].get("value"))
+            except Exception:  # noqa: BLE001
+                v = None
+            if v is not None:
+                rp_history.append((e[0], v))
+
     out = {
         "name": name,
         "platform": plat,
@@ -216,7 +261,9 @@ def query(platform: str, name: str) -> dict | None:
         "total_hours": _num((fs.get("totalsHoursPlayed") or {}).get("hours")),
         "season": cur_season,
         "seasons": seasons[1:],  # 历史（新→旧，不含本赛季）
-        "operators": operators[:TOP_OPERATORS],
+        "peak": peak,
+        "rp_history": rp_history,
+        "operators": operators[:CARD_OPERATORS],
     }
     _cache[ck] = (time.time(), out)
     return out
@@ -260,7 +307,7 @@ def format_reply(q: dict) -> str:
             parts.append(f"{x['code']} {x.get('rank') or '-'} {rp}/KD{kd}")
         lines.append("近几季：" + " ｜ ".join(parts))
 
-    ops = [o for o in (q.get("operators") or []) if o.get("kd") is not None]
+    ops = [o for o in (q.get("operators") or []) if o.get("kd") is not None][:TOP_OPERATORS]
     if ops:
         lines.append("常用干员：" + " · ".join(
             f"{o['name']} KD{o['kd']:.2f}"
@@ -318,7 +365,7 @@ def format_card_text(q: dict) -> str:
             rp = f"{int(x['rp'])} RP" if x.get("rp") is not None else "—"
             lines.append(f"　{x['code']}　{x.get('rank') or '—'}　{rp}　{kd}")
 
-    ops = [o for o in (q.get("operators") or []) if o.get("kd") is not None]
+    ops = [o for o in (q.get("operators") or []) if o.get("kd") is not None][:TOP_OPERATORS]
     if ops:
         lines += ["", "常用干员"]
         for o in ops:
