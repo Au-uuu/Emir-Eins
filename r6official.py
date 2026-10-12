@@ -17,6 +17,14 @@ Beaulo 4794h vs 10557h、mojinqiu 388h vs 180h），所以「时长」这项只�
 
 ⚠️ 官方 `player_skill_records`（逐赛季段位）**只覆盖旧 MMR 时代（赛季 6–27）**，
 RP 时代（Y8 起）没有——所以逐赛季历史仍得用 Arenyze 的 segments。
+
+⚠️ 现状：这条路**暂时搁置**（用不上了）。准确时长其实在 Arenyze 的
+`/v2/profile → seasons.data.segments[type=overview].stats.timePlayed` 里，
+不需要官方 API。凭据已从服务器 `.env` 清掉，`curl_cffi` 也已卸装。
+真要启用时：`pip install curl_cffi`，再配
+`QQ_BOT_UBI_EMAIL` / `QQ_BOT_UBI_PASSWORD` / `QQ_BOT_UBI_PROXY`
+（必须走代理——机房 IP 会被育碧按 IP 限流 429 连登录都过不去）；
+`enabled()` 要求三项齐全才生效，缺任一项就完全不动。
 """
 
 from __future__ import annotations
