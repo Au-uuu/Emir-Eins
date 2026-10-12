@@ -160,7 +160,7 @@ def _render(q: dict) -> bytes:
     y += AVATAR + 30
     y = _hr(d, y)
 
-    # ---------- 段位 + 本赛季（合并成一块） ----------
+    # ---------- 最上面一栏：段位 + 本赛季 + 历史最高 ----------
     icon = _fetch(q.get("rank_icon"))
     ix = PAD
     if icon is not None:
@@ -173,45 +173,54 @@ def _render(q: dict) -> bytes:
     seg = q.get("rank") or "未定级"
     if q.get("rp") is not None:
         seg += f"　{int(q['rp'])} RP"
-    if q.get("max_rp") is not None:
-        seg += f"（历史最高 {int(q['max_rp'])}）"
     d.text((ix, y - 4), seg, font=_font(34), fill=ACCENT)
+    y += 60
 
     s = q.get("season")
     if s and s.get("matches"):
+        d.text((PAD, y), f"本赛季 {s['code']} {s['name']}".rstrip(), font=_font(28), fill=FG)
+        y += 44
         wr = f"{int(s['wins'])}胜{int(s['losses'])}负" if s.get("wins") is not None else ""
         pct = f"（{s['win_rate']:.0f}%）" if s.get("win_rate") is not None else ""
-        kd = f"　KD {s['kd']:.2f}" if s.get("kd") is not None else ""
-        d.text((PAD, y + 58), f"本赛季 {s['code']} {s['name']}".rstrip(), font=_font(28), fill=FG)
-        d.text((PAD + 14, y + 100), f"{int(s['matches'])} 场　{wr}{pct}{kd}", font=_font(26), fill=SUB)
-        y += 150
-    else:
-        y += 76
+        parts = [f"{int(s['matches'])} 场", f"{wr}{pct}"]
+        if s.get("kd") is not None:
+            parts.append(f"KD {s['kd']:.2f}")
+        if s.get("kda") is not None:
+            parts.append(f"KDA {s['kda']:.2f}")
+        if s.get("hs") is not None:
+            parts.append(f"爆头 {s['hs']:.0f}%")
+        d.text((PAD + 14, y), "　".join(parts), font=_font(26), fill=SUB)
+        y += 44
+
+    peak = q.get("peak")
+    if peak:
+        pk = f"历史最高　{peak.get('code') or '—'}　{peak.get('rank') or '—'}"
+        if peak.get("rp") is not None:
+            pk += f"　{int(peak['rp'])} RP"
+        d.text((PAD, y), pk, font=_font(26), fill=SUB)
+        y += 40
     y = _hr(d, y)
 
-    # ---------- 近几季（左）+ 历史最高（右） ----------
+    # ---------- 近几季（每行：赛季/段位/RP/KD/KDA/胜率/爆头率） ----------
     hist = [x for x in (q.get("seasons") or []) if x.get("matches")][:3]
-    peak = q.get("peak")
-    if hist or peak:
+    if hist:
         d.text((PAD, y), "近几季", font=_font(30), fill=FG)
-        px_right = PAD + 556
-        if peak:
-            d.text((px_right, y), "历史最高", font=_font(30), fill=FG)
         y += 48
-        first_row_y = y
         for x in hist:
             rp = f"{int(x['rp'])} RP" if x.get("rp") is not None else "—"
-            kd = f"KD {x['kd']:.2f}" if x.get("kd") is not None else "KD —"
-            d.text((PAD + 14, y), str(x.get("code") or "—"), font=_font(27), fill=SUB)
-            d.text((PAD + 130, y), str(x.get("rank") or "—"), font=_font(27), fill=FG)
-            d.text((PAD + 300, y), rp, font=_font(27), fill=SUB)
-            d.text((PAD + 420, y), kd, font=_font(27), fill=SUB)
-            y += 44
-        if peak:
-            d.text((px_right, first_row_y), str(peak.get("code") or "—"), font=_font(27), fill=SUB)
-            d.text((px_right + 96, first_row_y), str(peak.get("rank") or "—"), font=_font(27), fill=FG)
-            d.text((px_right + 232, first_row_y), f"{int(peak['rp'])} RP", font=_font(27), fill=ACCENT)
-        y += 8
+            kd = f"{x['kd']:.2f}" if x.get("kd") is not None else "—"
+            kda = f"{x['kda']:.2f}" if x.get("kda") is not None else "—"
+            wr = f"{x['win_rate']:.0f}%" if x.get("win_rate") is not None else "—"
+            hs = f"{x['hs']:.0f}%" if x.get("hs") is not None else "—"
+            d.text((PAD + 14, y), str(x.get("code") or "—"), font=_font(24), fill=SUB)
+            d.text((PAD + 120, y), str(x.get("rank") or "—"), font=_font(24), fill=FG)
+            d.text((PAD + 268, y), rp, font=_font(24), fill=SUB)
+            d.text((PAD + 400, y), f"KD {kd}", font=_font(24), fill=SUB)
+            d.text((PAD + 512, y), f"KDA {kda}", font=_font(24), fill=SUB)
+            d.text((PAD + 640, y), f"胜 {wr}", font=_font(24), fill=SUB)
+            d.text((PAD + 760, y), f"爆头 {hs}", font=_font(24), fill=SUB)
+            y += 40
+        y += 6
     y = _hr(d, y)
 
     # ---------- 近一月 RP 走势 ----------

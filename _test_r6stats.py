@@ -63,6 +63,11 @@ FULL = {"fullStats": {
 
 calls = {"n": 0}
 
+OPERATORS = {"operators": {"operators": [
+    {"operator": "Pulse", "kd": 1.39, "winPercent": 55.0, "roundsPlayed": 2348,
+     "kills": 1000, "deaths": 700, "headshots": 400, "assists": 200},
+]}}
+
 
 def fake_get(path, **params):
     calls["n"] += 1
@@ -72,6 +77,8 @@ def fake_get(path, **params):
         return PROFILE
     if path == "/v2/fullstats":
         return FULL
+    if path == "/v2/operators":
+        return OPERATORS
     raise AssertionError(f"未预期的路径 {path}")
 
 
@@ -107,6 +114,8 @@ check("解析最高 RP", q and q["max_rp"] == 4442)
 check("历史最高（RP 时代）", q and q.get("peak") and q["peak"]["code"] == "Y11S3"
       and int(q["peak"]["rp"]) == 4442)
 check("RP 序列旧→新", q and [int(v) for _, v in q["rp_history"]] == [4000, 4347])
+check("本赛季爆头率/KDA（干员汇总）",
+      q and abs(q["season"]["hs"] - 40.0) < 0.01 and abs(q["season"]["kda"] - 1200 / 700) < 0.01)
 check("解析等级/总时长", q and q["level"] == 3512 and q["total_hours"] == 5706)
 check("本赛季取最新（Y11S3）", q and q["season"]["code"] == "Y11S3")
 check("本赛季胜负/胜率", q and q["season"]["wins"] == 112 and q["season"]["losses"] == 107

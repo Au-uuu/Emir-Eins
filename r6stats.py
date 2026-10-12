@@ -127,6 +127,34 @@ def _zh_rank(name: str | None) -> str | None:
     return name
 
 
+# 按赛季汇总干员 → 爆头率 / KDA。赛季分段本身没有爆头/助攻字段，只能这么算。
+# 过去赛季不会再变，缓存 7 天；本赛季缓存 10 分钟。key = (平台, 昵称, 赛季)。
+_extra_cache: dict[tuple[str, str, str], tuple[float, dict | None]] = {}
+
+
+def _season_extra(plat: str, name: str, code: str, ttl: float) -> dict | None:
+    ck = (plat, name.lower(), code)
+    now = time.time()
+    hit = _extra_cache.get(ck)
+    if hit and now < hit[0]:
+        return hit[1]
+    data = None
+    try:
+        d = _get("/v2/operators", nameOnPlatform=name, platformType=plat,
+                 seasonYear=code, modes="ranked")
+        ops = ((d or {}).get("operators") or {}).get("operators") or []
+        k = sum(o.get("kills") or 0 for o in ops)
+        de = sum(o.get("deaths") or 0 for o in ops)
+        hs = sum(o.get("headshots") or 0 for o in ops)
+        a = sum(o.get("assists") or 0 for o in ops)
+        if k:
+            data = {"hs": hs / k * 100.0, "kda": ((k + a) / de) if de else None}
+    except Exception as exc:  # noqa: BLE001
+        log.info("[R6] 赛季干员统计失败 %s：%s", code, exc)
+    _extra_cache[ck] = (now + ttl, data)
+    return data
+
+
 def _season_of(seg: dict) -> dict:
     st = seg.get("stats") or {}
     meta = seg.get("metadata") or {}
@@ -167,8 +195,11 @@ def query(platform: str, name: str) -> dict | None:
     if hit and time.time() - hit[0] < CACHE_TTL:
         return hit[1]
     try:
-        prof = _get("/v2/profile", nameOnPlatform=name, platformType=plat)
-        full = _get("/v2/fullstats", nameOnPlatform=name, platformType=plat)
+        import concurrent.futures as _cf
+        with _cf.ThreadPoolExecutor(max_workers=2) as ex:
+            f_prof = ex.submit(_get, "/v2/profile", nameOnPlatform=name, platformType=plat)
+            f_full = ex.submit(_get, "/v2/fullstats", nameOnPlatform=name, platformType=plat)
+            prof, full = f_prof.result(), f_full.result()
     except Exception as exc:  # noqa: BLE001
         log.info("[R6] 查询失败：%s", exc)
         return None
@@ -212,6 +243,20 @@ def query(platform: str, name: str) -> dict | None:
     cur_season = seasons[0] if seasons else None
     if cur_season and cur_season.get("rank") and not rank:
         rank = cur_season["rank"]
+
+    # 给本赛季和「近几季」各行补爆头率 / KDA（按赛季汇总干员数据，带缓存；**并行**请求）
+    targets = [s for s in ([cur_season] + seasons[1: 1 + SEASON_HISTORY]) if s and s.get("code")]
+    if targets:
+        import concurrent.futures as _cf
+
+        def _one(s):
+            ttl = 600.0 if s is cur_season else 7 * 86400.0
+            return s, _season_extra(plat, name, s["code"], ttl)
+
+        with _cf.ThreadPoolExecutor(max_workers=min(4, len(targets))) as ex:
+            for s, extra in ex.map(_one, targets):
+                if extra:
+                    s["hs"], s["kda"] = extra.get("hs"), extra.get("kda")
 
     operators = []
     for o in (fs.get("operators") or [])[:50]:
