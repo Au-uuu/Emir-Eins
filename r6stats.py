@@ -33,7 +33,10 @@ DEFAULT_PLATFORM = "uplay"
 TOP_OPERATORS = 3   # 文字版展示的干员数
 CARD_OPERATORS = 6  # 图片卡片展示的干员数
 SEASON_HISTORY = 3
-CACHE_TTL = 300.0  # 秒；同一玩家 5 分钟内不重复请求（省额度）
+CACHE_TTL = 1800.0  # 秒；同一玩家 30 分钟内不重复请求
+# ⚠️ 免费额度是 **300 次/天**（另有 20/分、120/时）。每次冷查要打 2 个接口，
+# 所以 TTL 不能太短——5 分钟的话，一个常被查的玩家一天就能吃掉 500+ 次。
+# 另外被限流时会记下恢复时间（见 _note_blocked），期间不再白打接口。
 
 PLATFORM_ALIASES = {
     "pc": "uplay", "uplay": "uplay", "ubi": "uplay", "steam": "uplay", "ubisoft": "uplay",
@@ -46,6 +49,8 @@ _cache: dict[tuple[str, str], tuple[float, dict]] = {}
 _ranks_cache: list | None = None
 _refreshing: set[tuple[str, str]] = set()   # 正在后台刷新的玩家（去重，别重复打接口）
 _refresh_lock = threading.Lock()
+_quota: dict = {}           # 最近一次响应里的额度信息（Arenyze 会在响应头里给）
+_blocked_until = 0.0        # 被限流时，在这之前不再打接口
 
 
 def _env(name: str, default: str = "") -> str:
@@ -90,13 +95,64 @@ def _get(path: str, **params):
     )
     try:
         with urllib.request.urlopen(req, timeout=_timeout()) as resp:
+            _note_quota(resp.headers)
             return json.loads(resp.read().decode("utf-8", "replace"))
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
             raise R6NotFound(f"HTTP 404 {path}") from exc
+        if exc.code == 429:
+            _note_blocked(exc.headers)
+            raise R6Unavailable(f"数据源限流（{path}）") from exc
         raise R6Unavailable(f"HTTP {exc.code} {path}") from exc
     except Exception as exc:  # 超时 / DNS / 连接被拒 / JSON 坏掉
         raise R6Unavailable(f"{type(exc).__name__}: {exc}") from exc
+
+
+def _note_quota(headers) -> None:
+    """记下 Arenyze 响应头里的额度信息（免费版 20/分、120/时、300/天）。"""
+    def g(name: str) -> int:
+        try:
+            return int(headers.get(name) or 0)
+        except (TypeError, ValueError):
+            return 0
+    day_left = g("X-RateLimit-Day-Remaining")
+    with _quota_lock_view():
+        _quota.update({
+            "day_remaining": day_left,
+            "hour_remaining": g("X-RateLimit-Hour-Remaining"),
+            "minute_remaining": g("X-RateLimit-Minute-Remaining"),
+            "day_reset": headers.get("X-RateLimit-Day-Reset") or "",
+        })
+    if 0 < day_left <= 30:
+        log.warning("[R6] 今日额度只剩 %d 次（免费版 300/天）", day_left)
+
+
+def _quota_lock_view():
+    """额度状态用同一把锁保护（和刷新去重共用即可）。"""
+    return _refresh_lock
+
+
+def _note_blocked(headers) -> None:
+    """429 时记下要等多久再打接口（Retry-After），避免继续白打、把窗口限流也耗掉。"""
+    global _blocked_until
+    try:
+        after = float(headers.get("Retry-After") or 0)
+    except (TypeError, ValueError):
+        after = 0.0
+    with _quota_lock_view():
+        _blocked_until = time.time() + (after or 60.0)
+    log.warning("[R6] 被限流，%.0f 分钟后再试", (after or 60.0) / 60)
+
+
+def blocked_for() -> float:
+    """还在限流中的剩余秒数（0 = 没被限流）。"""
+    return max(0.0, _blocked_until - time.time())
+
+
+def quota() -> dict:
+    """给日志/排查看的额度快照。"""
+    with _quota_lock_view():
+        return dict(_quota)
 
 
 def platform_label(platform: str) -> str:
@@ -235,6 +291,11 @@ def _fetch_pair(name: str, plat: str, attempts: int = 2):
     **先看有没有 404**，再看剩下的是不是接口故障。
     """
     import concurrent.futures as _cf
+
+    left = blocked_for()
+    if left > 0:
+        # 已知还在限流就别白打——省得连分钟/小时窗口也一起耗掉
+        raise R6Unavailable(f"限流中（约 {int(left // 60) + 1} 分钟后恢复）")
 
     last: Exception | None = None
     for attempt in range(1, attempts + 1):

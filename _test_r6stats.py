@@ -268,9 +268,9 @@ except Exception as exc:  # noqa: BLE001
 _real_urlopen = urllib.request.urlopen
 
 
-def _fake_urlopen_code(code):
+def _fake_urlopen_code(code, headers=None):
     def _open(req, timeout=None):
-        raise urllib.error.HTTPError(req.full_url, code, "x", {}, None)
+        raise urllib.error.HTTPError(req.full_url, code, "x", headers or {}, None)
     return _open
 
 
@@ -284,6 +284,26 @@ for _code, _want in ((404, r6stats.R6NotFound), (503, r6stats.R6Unavailable)):
     except Exception as exc:  # noqa: BLE001
         check(f"_get HTTP {_code} → {_want.__name__}", False, repr(exc))
 urllib.request.urlopen = _real_urlopen
+
+# 429：按 Retry-After 记下恢复时间，期间**不再白打接口**（免费额度 300/天，很宝贵）
+r6stats._blocked_until = 0.0
+urllib.request.urlopen = _fake_urlopen_code(429, {"Retry-After": "120"})
+try:
+    _REAL_GET("/v2/profile", nameOnPlatform="X", platformType="uplay")
+except r6stats.R6Unavailable:
+    pass
+urllib.request.urlopen = _real_urlopen
+check("429 按 Retry-After 记下恢复时间", r6stats.blocked_for() > 100,
+      f"{r6stats.blocked_for():.0f}s")
+_n1 = calls["n"]
+try:
+    r6stats.query("uplay", "ZzzNobodyElse")
+    _blocked_ok = False
+except r6stats.R6Unavailable:
+    _blocked_ok = True
+check("限流期间直接失败，不再打接口（省额度）", _blocked_ok and calls["n"] == _n1,
+      f"calls {_n1}->{calls['n']}")
+r6stats._blocked_until = 0.0
 
 print(f"\n{'=' * 50}")
 print(f"失败 {failures} 项")

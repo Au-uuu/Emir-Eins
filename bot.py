@@ -2363,10 +2363,17 @@ async def _r6_fetch(message, platform: str, name: str):
         return None
     except r6stats.R6Unavailable as exc:
         log.warning("[R6] 接口不稳定：%s", exc)
-        await message.reply(
-            content="R6 数据接口刚才抽风了（超时 / 503），自动重试也没成功——"
-            "过十几秒再发一次就行，不是你的昵称写错了。"
-        )
+        if "限流" in str(exc):
+            await message.reply(
+                content=f"R6 数据源的额度暂时用完了（{exc}）——"
+                f"免费版是 20 次/分、120 次/时、300 次/天，查太勤会被掐。\n"
+                f"想马上看的话可以先 /r6网站 去站上看。"
+            )
+        else:
+            await message.reply(
+                content="R6 数据接口刚才抽风了（超时 / 503），自动重试也没成功——"
+                "过十几秒再发一次就行，不是你的昵称写错了。"
+            )
         return None
     if data:
         return data
