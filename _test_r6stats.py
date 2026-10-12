@@ -139,8 +139,9 @@ check("解析等级", q and q["level"] == 3512)
 check("不再输出游戏时长（上游口径不可靠，已从展示里删掉）",
       q is not None and "total_hours" not in q)
 check("本赛季取最新（Y11S3）", q and q["season"]["code"] == "Y11S3")
-check("本赛季胜负/胜率", q and q["season"]["wins"] == 112 and q["season"]["losses"] == 107
-      and abs(q["season"]["win_rate"] - 50.9) < 1)
+check("本赛季胜负/胜率（分母用 胜+负，与 TN 一致）",
+      q and q["season"]["wins"] == 112 and q["season"]["losses"] == 107
+      and abs(q["season"]["win_rate"] - 112 / 219 * 100) < 0.01)
 check("历史赛季不含本赛季", q and all(s["code"] != "Y11S3" for s in q["seasons"]))
 check("干员按回合排序", q and q["operators"][0]["name"] == "Pulse")
 

@@ -162,8 +162,13 @@ def _season_of(seg: dict) -> dict:
     wins = _num(st.get("matchesWon"))
     losses = _num(st.get("matchesLost"))
     wr = None
-    if matches and wins is not None:
-        wr = wins / matches * 100.0
+    if wins is not None:
+        # 分母用「胜 + 负」，不用 matchesPlayed：排位里偶尔有既非胜也非负的场次
+        # （放弃 / 无结果），matchesPlayed 会比 wins+losses 多 1，拿场次当分母
+        # 会和 R6Tracker 差一个百分点（实测 37 场 17 胜 19 负：我们 46%、TN 47%）。
+        denom = wins + losses if losses is not None and wins + losses > 0 else matches
+        if denom:
+            wr = wins / denom * 100.0
     return {
         "code": meta.get("shortName") or meta.get("name") or "",
         "name": meta.get("seasonName") or meta.get("name") or "",
