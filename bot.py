@@ -262,20 +262,15 @@ HELP_TEXT = (
     "【批量】/批量添加 关键词　一次最多 5 张，把消息里的图片入库\n"
     "【删除】/删除 图库名 [私有/公开/全部]　先「引用一张图片」再回复；默认全部\n"
     "【取图】/来只 [关键词] [私有/公开/全部]　随机发一张图；默认全部\n"
-    "【查询】/图库　图库列表　/图库 关键词 [页码]　预览图（每页 8 张，查不到会推荐相关词）\n"
-    "　　　　/图库 统计　统计信息\n"
+    "【查询】/图库　图库列表　/图库 关键词 [页码]　预览图　更多用法：/help 图库\n"
     "【关联】/关联 主词 别名…　别名等价主词，如 /关联 猫 猫咪\n"
-    "　　　　/查找关联 [词]　/取消关联 别名\n"
     "【私有】/私有 图库名　设为当前群私有　/公开 图库名 取消\n"
-    "【名片】/添加名片 备注　引用图片后添加自己的游戏名片\n"
-    "　　　　/游戏名片　把自己的名片拼成一张图发送\n"
-    "　　　　/删除名片 备注|编号　或引用图片后 /删除名片\n"
-    "【公告】/公告　查看本群推送开关（默认关，每个游戏独立）\n"
-    "　　　　/公告 开|关 明日方舟|终末地|全部　版本更新推送\n"
-    "　　　　/公告 查 [游戏]　看最新公告（含活动类）\n"
-    "【R6】/r6 [平台] 昵称　彩虹六号战绩（平台 pc/ps/xbox，默认 pc）\n"
-    "　　　/r6绑定 [平台] 昵称　绑定后直接 /r6 直查　/r6解绑　解除\n"
-    "　　　/r6网站　给出 R6Tracker / stats.cc 个人主页链接（看每场对局）\n"
+    "【名片】/添加名片 备注　引用图片后添加游戏名片　更多用法：/help 名片\n"
+    "【公告】/公告　查看本群推送开关　/公告 查 [游戏]　更多用法：/help 公告\n"
+    "【R6】/r6 [平台] 昵称　彩虹六号战绩，别名 /彩六（平台 pc/ps/xbox，默认 pc）\n"
+    "　　　/r6　绑定后直接查自己的　/r6网站　个人主页链接　更多用法：/help r6\n"
+    "\n"
+    "详查：/help r6　/help 图库　/help 公告　/help 名片（某条指令的完整用法）\n"
     "\n"
     "快捷：只有「添加 / 删除 / 来只」可省略斜杠（添加、删除需引用图片），\n"
     "　　　其余指令必须带「/」。图库名不能是纯数字。\n"
@@ -294,6 +289,89 @@ ADMIN_HELP_TEXT = (
     "　/管理员 <口令>　（私聊）登记管理员\n"
     "\n" + HELP_TEXT
 )
+
+# 小功能较多的指令：**完整用法放进 `/help <主题>`**，主帮助只列常用几项，
+# 免得帮助图越滚越长、真正想找用法的人反而要翻半天。
+HELP_TOPICS = {
+    "r6": (
+        "【彩虹六号 · 完整用法】\n"
+        "\n"
+        "查询：/r6 [平台] 昵称\n"
+        "　平台可写 pc / ps / xbox（也认 uplay / psn / xbl），默认 pc\n"
+        "　例：/r6 MacieJay　　/r6 ps 张三\n"
+        "　别名：/彩六、/彩虹六号 与 /r6 完全等价\n"
+        "\n"
+        "绑定：/r6绑定 [平台] 昵称\n"
+        "　绑定后直接发 /r6（或 /彩六）就查你自己，不用每次打昵称；\n"
+        "　再绑定一次＝覆盖旧的，不需要解绑。\n"
+        "　注意：绑定是「按场景」的——单聊和各个群是不同的身份，换个地方要重绑。\n"
+        "\n"
+        "外链：/r6网站\n"
+        "　给出 R6Tracker 与 stats.cc 的个人主页链接，看每场对局等更多历史\n"
+        "　（这两个站有反爬，机器人只给链接，请用自己的浏览器打开）\n"
+        "\n"
+        "卡片内容：段位 / RP / 等级 / 时长、历史最高、本赛季 K/D·胜负、\n"
+        "　　　　　近几季段位、RP 走势、常用干员。\n"
+        "数据来源：R6 Arenyze，同一玩家 5 分钟内走缓存（所以第一次查会慢几秒）。"
+    ),
+    "图库": (
+        "【图库 · 完整用法】\n"
+        "\n"
+        "看列表：/图库\n"
+        "　　　　/图库 关键词 [页码]　预览图（每页 8 张，查不到会推荐相关词）\n"
+        "　　　　/图库 统计　统计信息\n"
+        "\n"
+        "存图：/添加 关键词…　（引用一张图片后回复；同一条消息附图要写成 /添加）\n"
+        "　　　/批量添加 关键词　一次最多 5 张，把消息里的图都入库\n"
+        "删图：/删除 图库名 [私有/公开/全部]　（先引用一张图片再回复，默认全部）\n"
+        "取图：/来只 [关键词] [私有/公开/全部]　随机发一张，默认全部\n"
+        "\n"
+        "私有：/私有 图库名　设为当前群私有　　/公开 图库名　取消\n"
+        "关联：/关联 主词 别名…　别名等价主词（如 /关联 猫 猫咪）\n"
+        "　　　/查找关联 [词]　查某词的所有别名　　/取消关联 别名\n"
+        "\n"
+        "快捷：只有「添加 / 删除 / 来只」可以省略斜杠（添加、删除须引用图片），\n"
+        "　　　其余指令必须带「/」。图库名不能是纯数字。"
+    ),
+    "公告": (
+        "【游戏公告 · 完整用法】\n"
+        "\n"
+        "看开关：/公告　（默认全关，每个游戏独立）\n"
+        "开 关：/公告 开|关 明日方舟|终末地|全部\n"
+        "查公告：/公告 查 [游戏]　看最新公告（含活动类）\n"
+        "\n"
+        "开启后，对应游戏有新版本/公告时我会自动推到本群。"
+    ),
+    "名片": (
+        "【游戏名片 · 完整用法】\n"
+        "\n"
+        "添加：/添加名片 备注　引用一张图片后回复\n"
+        "查看：/游戏名片　把自己的名片拼成一张图发出来\n"
+        "删除：/删除名片 备注|编号　或引用图片后 /删除名片\n"
+        "\n"
+        "名片只属于你自己（按会话身份隔离）。"
+    ),
+}
+
+# 主题别名：/help 彩六 等价于 /help r6
+HELP_TOPIC_ALIASES = {
+    "彩六": "r6",
+    "彩虹六号": "r6",
+    "r6stats": "r6",
+    "查询": "图库",
+    "取图": "图库",
+    "收藏": "图库",
+    "推送": "公告",
+    "游戏名片": "名片",
+}
+
+
+def help_topic(name: str) -> str | None:
+    """按主题取详细帮助；别名归一；查不到返回 None。"""
+    key = (name or "").strip().lower()
+    if not key:
+        return None
+    return HELP_TOPICS.get(HELP_TOPIC_ALIASES.get(key, key))
 
 # /echo 可复读的最大字数，防止超长消息触发平台长度限制
 ECHO_MAX_LEN = 200
@@ -330,7 +408,12 @@ CARD_ADD_RE = re.compile(r"^/添加名片\s*(.*)$", re.DOTALL)
 CARD_RE = re.compile(r"^/游戏名片\s*(.*)$", re.DOTALL)
 CARD_DEL_RE = re.compile(r"^/删除名片\s*(.*)$", re.DOTALL)
 # R6 战绩查询（见 r6stats.py）
-R6_RE = re.compile(r"^/r6(?:战绩)?\s*(.*)$", re.IGNORECASE | re.DOTALL)
+# R6 战绩查询（见 r6stats.py）。别名：/彩六、/彩虹六号。
+# 必须带斜杠——不然群里一聊到「彩六」就会被当成查询。
+R6_RE = re.compile(r"^/(?:r6|彩六|彩虹六号)(?:战绩)?\s*(.*)$", re.IGNORECASE | re.DOTALL)
+
+# 帮助：/help、/帮助、/菜单；带主题时 /help r6 查某条指令的完整用法。
+HELP_RE = re.compile(r"^/(?:help|帮助|菜单)\s*(.*)$", re.IGNORECASE | re.DOTALL)
 
 # 管理员登记指令（**只在私聊可用，且不对外展示**）：「管理员 <口令>」
 ADMIN_RE = re.compile(r"^/?管理员\s*(.*)$", re.DOTALL)
@@ -2014,14 +2097,32 @@ async def send_help(message, api, scope: str, scene_id: str, full: bool = False)
     客户端也不再显示。需要找回时见 docs/changes/2026-10-02-help-image.md。
     """
     text = ADMIN_HELP_TEXT if full else HELP_TEXT
+    await _send_help_text(message, api, scope, scene_id, text, "帮助")
+
+
+async def send_help_topic(message, api, scope: str, scene_id: str, topic: str) -> None:
+    """某条指令的**完整用法**（`/help r6`）。查不到主题就给出可查清单。"""
+    text = help_topic(topic)
+    if not text:
+        keys = "　/help ".join(HELP_TOPICS.keys())
+        await message.reply(
+            content=f"没有「{topic}」的详细帮助。可查：/help {keys}"
+        )
+        return
+    await _send_help_text(message, api, scope, scene_id, text, f"帮助·{topic}")
+
+
+async def _send_help_text(message, api, scope: str, scene_id: str,
+                          text: str, tag: str) -> None:
+    """帮助统一发送：优先图片（长文本更省屏），渲染/上传失败再退回文本。"""
     started = time.monotonic()
 
     image = await asyncio.to_thread(help_image.render, text)
     if image and await _reply_image_bytes(message, api, scope, scene_id, image, "help.jpg"):
-        log.info("[帮助] 已发送图片，我方耗时 %.0f ms", (time.monotonic() - started) * 1000)
+        log.info("[%s] 已发送图片，我方耗时 %.0f ms", tag, (time.monotonic() - started) * 1000)
         return
     if image:
-        log.warning("[帮助] 图片发送失败，退回文本形态")
+        log.warning("[%s] 图片发送失败，退回文本形态", tag)
 
     try:
         await message.reply(content=text)
@@ -2230,12 +2331,13 @@ def _r6_split(args: str) -> tuple[str, str]:
 
 
 async def do_r6(message, api, scope: str, scene_id: str, text: str) -> None:
-    """R6 战绩查询。
+    """R6 战绩查询（指令 /r6，别名 /彩六、/彩虹六号）。
 
     /r6 [平台] 昵称　查指定玩家（平台 pc/ps/xbox，默认 pc）
-    /r6绑定 [平台] 昵称　绑定后直接 /r6 直查
-    /r6解绑　解除绑定
+    /r6　用绑定的昵称直查（没绑定给提示）
+    /r6绑定 [平台] 昵称　绑定；再绑一次即覆盖（不需要解绑）
     /r6网站　给出 R6Tracker / stats.cc 个人主页链接（看每场对局）
+    /r6帮助　完整用法（同 /help r6）
 
     成品优先发**图片卡片**，渲染/上传失败退回文本；网址类用文本（可点）。
     """
@@ -2247,9 +2349,8 @@ async def do_r6(message, api, scope: str, scene_id: str, text: str) -> None:
     low = args.lower()
     openid = author_openid(message)
 
-    if low in ("解绑", "unbind"):
-        ok = await bind_store.unbind(openid)
-        await message.reply(content="已解绑。" if ok else "你还没绑定过。")
+    if low in ("帮助", "help", "?", "？"):
+        await send_help_topic(message, api, scope, scene_id, "r6")
         return
 
     if low in ("网站", "网址", "链接", "site", "url"):
@@ -2276,7 +2377,8 @@ async def do_r6(message, api, scope: str, scene_id: str, text: str) -> None:
         await bind_store.bind(openid, platform, name, data.get("profile_id"))
         await message.reply(
             content=f"已绑定：{name}（{data['platform_label']} · {data['rank']}）。"
-            f"之后直接发 /r6 就能查；换群/单聊需各自绑定。"
+            f"之后直接发 /r6 就能查。再绑定一次会直接覆盖（不用解绑）；"
+            f"绑定按场景算，单聊 / 各群是各自的身份，换地方要重绑。"
         )
         return
 
@@ -2284,7 +2386,8 @@ async def do_r6(message, api, scope: str, scene_id: str, text: str) -> None:
         b = await bind_store.get(openid)
         if not b:
             await message.reply(
-                content="你还没绑定。用 /r6绑定 [平台] 昵称 绑定后，直接发 /r6 就能查。"
+                content="你还没绑定。用 /r6绑定 [平台] 昵称 绑定后，直接发 /r6 就能查"
+                "（完整用法 /help r6）。"
             )
             return
         platform, name = b["platform"], b["name"]
@@ -2321,10 +2424,16 @@ async def handle_command(message, api, scope: str, scene_id: str, content: str) 
             log.info("[管理员] 非私聊使用，已忽略")
         return True
 
-    if cmd in ("/help", "帮助", "/帮助", "菜单"):
-        # 管理员私聊里给完整指令表；群里/普通用户只给用户指令
-        full = scope == "c2c" and await store.is_admin(author_openid(message))
-        await send_help(message, api, scope, scene_id, full=full)
+    if cmd in ("帮助", "菜单") or HELP_RE.match(text):
+        # 带主题 → 某条指令的完整用法（/help r6）；不带 → 完整指令表
+        m_help = HELP_RE.match(text)
+        topic = ((m_help.group(1) if m_help else "") or "").strip()
+        if topic:
+            await send_help_topic(message, api, scope, scene_id, topic)
+        else:
+            # 管理员私聊里给完整指令表；群里/普通用户只给用户指令
+            full = scope == "c2c" and await store.is_admin(author_openid(message))
+            await send_help(message, api, scope, scene_id, full=full)
         return True
 
     if cmd in ("/ping", "/在线", "在线"):

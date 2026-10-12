@@ -197,9 +197,38 @@ async def main() -> int:
     check("帮助已发送", len(m.replies) == 1)
     check("不再带按钮（keyboard 已移除）", "keyboard" not in m.replies[0],
           str(list(m.replies[0].keys())))
-    check("帮助里写了 /图库 统计", "/图库 统计" in bot.HELP_TEXT)
-    check("帮助里写了只有添加/删除/来只可省斜杠",
-          "只有「添加 / 删除 / 来只」" in bot.HELP_TEXT)
+    check("主帮助指向详细帮助 /help r6", "/help r6" in bot.HELP_TEXT)
+    check("主帮助指向 /help 图库", "/help 图库" in bot.HELP_TEXT)
+    check("详细帮助（图库）里有 /图库 统计", "/图库 统计" in (bot.help_topic("图库") or ""))
+    check("详细帮助（图库）写了只有添加/删除/来只可省斜杠",
+          "只有「添加 / 删除 / 来只」" in (bot.help_topic("图库") or ""))
+    check("详细帮助（r6）含绑定与网站",
+          "r6绑定" in (bot.help_topic("r6") or "")
+          and "/r6网站" in (bot.help_topic("r6") or ""))
+    check("主题别名：彩六 → r6",
+          bot.help_topic("彩六") is not None and bot.help_topic("彩六") == bot.help_topic("r6"))
+    check("未知主题返回 None", bot.help_topic("没有这个主题") is None)
+
+    print("\n[8b] /help <主题>、/彩六 别名")
+    mt = FakeMessage("/help r6")
+    check("/help r6 有回复",
+          await bot.handle_command(mt, FakeApi(), "group", "G_TEST", "/help r6") is True
+          and len(mt.replies) == 1, str(mt.text_replies))
+    check("/help r6 内容是 r6 详细用法", any("r6绑定" in t for t in mt.text_replies),
+          str(mt.text_replies))
+
+    # 没有 key 时也要走 R6 分支（回「未启用」而不是装死），借此验证别名命中
+    os.environ.pop("QQ_BOT_R6_KEY", None)
+    mc = FakeMessage("/彩六")
+    check("/彩六 触发 R6 指令",
+          await bot.handle_command(mc, FakeApi(), "group", "G_TEST", "/彩六") is True
+          and len(mc.replies) == 1, str(mc.text_replies))
+    check("/彩六 回复来自 R6 查询", any("R6" in t for t in mc.text_replies), str(mc.text_replies))
+
+    bare = FakeMessage("彩六好玩吗")
+    check("裸「彩六」不误触（留给闲聊）",
+          await bot.handle_command(bare, FakeApi(), "group", "G_TEST", "彩六好玩吗") is False
+          and bare.replies == [])
 
     print("\n[9] 斜杠强制：图库/关联/私有/公开 必须带 /")
     for bare in ("图库", "关联 a b", "取消关联 a", "查找关联 a", "私有 x", "公开 x"):
