@@ -2345,13 +2345,12 @@ async def _r6_fetch(message, platform: str, name: str):
 
     区分「查无此人」和「接口抽风」是必须的：Arenyze 偶发 503 时，
     以前一律回「没查到…确认拼写」，害得用户去改一个本来正确的昵称。
+
+    ⚠️ 这里**只回复一次**。QQ 的被动回复是「msg_id + msg_seq」去重：对同一条消息
+    发第二条必须递增 msg_seq，而 `message.reply()` 不会自动递增——多发一条就会被
+    判成重复消息整个丢掉（40054005 消息被去重，实测把卡片都吞了）。
+    想做「正在查…」这类前置提示，必须自己维护 msg_seq 计数器，别直接 reply 两次。
     """
-    if not r6stats.is_cached(platform, name):
-        # 冷查询要等 Arenyze 现拉数据（实测 3~9 秒），先回一句，别让用户以为机器人卡死了。
-        # 被动回复每条消息最多能回 5 次，多这一句不心疼。
-        await message.reply(
-            content=f"🔍 正在查 {name}…"
-        )
     try:
         data = await asyncio.to_thread(r6stats.query, platform, name)
     except r6stats.R6NotFound:
