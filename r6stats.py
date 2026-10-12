@@ -3,7 +3,7 @@
 - 数据源：https://public-api.arenyze.com/r6/api
 - 鉴权：`api-key` 头（key 放 .env 的 `QQ_BOT_R6_KEY`）
 - 能力：段位/RP/最高段位/等级、本赛季与**逐赛季历史**（场次/胜负/KD/时长）、逐干员、
-  总时长；RP→段位名用 `/ranks?version=v7` 映射。
+  RP→段位名用 `/ranks?version=v7` 映射。
 - **拿不到「每场对局详情」**：该 API 没有对局列表接口（探测 `/v2/matches` 等均 404），
   只有「逐赛季」与「RP 随时间变化」。想要每场的地图/比分得另找来源（TN/stats.cc 被
   Cloudflare 拦且封爬虫）。
@@ -386,7 +386,10 @@ def _build(plat: str, name: str) -> dict:
         "rank": rank or "未定级",
         "rp": rp,
         "max_rp": max_rp,
-        "total_hours": _num((fs.get("totalsHoursPlayed") or {}).get("hours")),
+        # ⚠️ 这里**故意不给「游戏时长」**：Arenyze 的 totalsHoursPlayed 是「全模式逐赛季
+        # 相加的会话时长」，和 R6Tracker/官方口径对不上，而且错得没有规律——
+        # 实测 MacieJay 9305h vs 它 5887h、Beaulo 10557h vs 它 4794h、
+        # mojinqiu 180h vs 它 388h（忽高忽低）。上游数据不可靠，宁可不显示。
         "season": cur_season,
         "seasons": seasons[1:],  # 历史（新→旧，不含本赛季）
         "peak": peak,
@@ -411,8 +414,6 @@ def format_reply(q: dict) -> str:
     meta = []
     if q.get("level"):
         meta.append(f"等级 {q['level']}")
-    if q.get("total_hours"):
-        meta.append(f"总时长 {int(q['total_hours'])}h")
     if meta:
         lines.append(" ｜ ".join(meta))
 
@@ -490,8 +491,6 @@ def format_card_text(q: dict) -> str:
     meta = []
     if q.get("level"):
         meta.append(f"等级 {q['level']}")
-    if q.get("total_hours"):
-        meta.append(f"总时长 {int(q['total_hours'])}h")
     if meta:
         lines.append("　".join(meta))
 

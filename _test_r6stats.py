@@ -135,7 +135,9 @@ check("xbl → xbl 平台映射",
 check("psn → psn 平台映射",
       any("/r6siege/profile/psn/X/overview" in u for u in r6stats.site_urls("psn", "X", None)))
 check("无 profile_id 时只给 R6Tracker", len(r6stats.site_urls("uplay", "X", None)) == 1)
-check("解析等级/总时长", q and q["level"] == 3512 and q["total_hours"] == 5706)
+check("解析等级", q and q["level"] == 3512)
+check("不再输出游戏时长（上游口径不可靠，已从展示里删掉）",
+      q is not None and "total_hours" not in q)
 check("本赛季取最新（Y11S3）", q and q["season"]["code"] == "Y11S3")
 check("本赛季胜负/胜率", q and q["season"]["wins"] == 112 and q["season"]["losses"] == 107
       and abs(q["season"]["win_rate"] - 50.9) < 1)

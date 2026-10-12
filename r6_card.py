@@ -224,7 +224,8 @@ def _render(q: dict) -> bytes:
 
     tx = ax + asz + 24
     d.text((tx, ay + 2), q["name"], font=_font(40), fill=FG)
-    # 平台色块（文字在色块内精确居中）+ 等级 + 时长
+    # 平台色块（文字在色块内精确居中）+ 等级
+    # （**不显示「游戏时长」**：上游口径乱、跨账号错得没规律，见 r6stats 里那段注释）
     lab, f20 = q["platform_label"], _font(20)
     l, t, r, b = d.textbbox((0, 0), lab, font=f20)
     cw, ch = (r - l) + 26, (b - t) + 14
@@ -234,8 +235,6 @@ def _render(q: dict) -> bytes:
     meta = []
     if q.get("level"):
         meta.append(f"等级 {q['level']}")
-    if q.get("total_hours"):
-        meta.append(f"总时长 {int(q['total_hours'])}h")
     d.text((cx + cw + 14, cy + 7 - t), "　".join(meta), font=f20, fill=SUB)
     peak = q.get("peak")
     if peak:
