@@ -152,6 +152,17 @@ def query(platform: str, name: str) -> dict | None:
         return None
 
     account = prof.get("account") or {}
+    # 素材：头像 + 当前段位图标（RP 历史最新一条带 imageUrl）
+    avatar = account.get("profilePicture")
+    rank_icon = None
+    hist_raw = (
+        (((prof.get("history") or {}).get("data") or {}).get("history") or {}).get("data")
+    ) or []
+    if isinstance(hist_raw, list) and hist_raw:
+        try:
+            rank_icon = (hist_raw[0][1].get("metadata") or {}).get("imageUrl")
+        except Exception:  # noqa: BLE001
+            rank_icon = None
     # 当前排位面板
     rank = rp = max_rp = None
     boards = ((prof.get("stats") or {}).get("platform_families_full_profiles") or [{}])[0]
@@ -196,6 +207,8 @@ def query(platform: str, name: str) -> dict | None:
         "name": name,
         "platform": plat,
         "platform_label": PLATFORM_LABEL.get(plat, plat),
+        "avatar": avatar,
+        "rank_icon": rank_icon,
         "level": account.get("level"),
         "rank": rank or "未定级",
         "rp": rp,
@@ -255,3 +268,85 @@ def format_reply(q: dict) -> str:
             for o in ops
         ))
     return "\n".join(lines)
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(_env(name) or default)
+    except ValueError:
+        return default
+
+
+def image_enabled() -> bool:
+    return (_env("QQ_BOT_R6_IMAGE") or "1").lower() in {"1", "true", "on", "yes"}
+
+
+def format_card_text(q: dict) -> str:
+    """战绩的**卡片版**文本（比聊天纯文本更整齐，用于渲染成图）。"""
+    if not q:
+        return ""
+    lines = ["【R6 战绩】", "", f"{q['name']}（{q['platform_label']}）"]
+
+    seg = f"段位 {q['rank']}"
+    if q.get("rp") is not None:
+        seg += f" · {int(q['rp'])} RP"
+    if q.get("max_rp") is not None:
+        seg += f"（最高 {int(q['max_rp'])}）"
+    lines.append(seg)
+
+    meta = []
+    if q.get("level"):
+        meta.append(f"等级 {q['level']}")
+    if q.get("total_hours"):
+        meta.append(f"总时长 {int(q['total_hours'])}h")
+    if meta:
+        lines.append("　".join(meta))
+
+    s = q.get("season")
+    if s and s.get("matches"):
+        wr = f"{int(s['wins'])}胜{int(s['losses'])}负" if s.get("wins") is not None else ""
+        pct = f"（{s['win_rate']:.0f}%）" if s.get("win_rate") is not None else ""
+        kd = f" · KD {s['kd']:.2f}" if s.get("kd") is not None else ""
+        lines += ["", f"本赛季 {s['code']} {s['name']}".rstrip(),
+                  f"　{int(s['matches'])} 场 {wr}{pct}{kd}"]
+
+    hist = [x for x in (q.get("seasons") or []) if x.get("matches")][:SEASON_HISTORY]
+    if hist:
+        lines += ["", "近几季"]
+        for x in hist:
+            kd = f"KD{x['kd']:.2f}" if x.get("kd") is not None else "KD —"
+            rp = f"{int(x['rp'])} RP" if x.get("rp") is not None else "—"
+            lines.append(f"　{x['code']}　{x.get('rank') or '—'}　{rp}　{kd}")
+
+    ops = [o for o in (q.get("operators") or []) if o.get("kd") is not None]
+    if ops:
+        lines += ["", "常用干员"]
+        for o in ops:
+            w = f" · 胜{o['win']:.0f}%" if o.get("win") is not None else ""
+            lines.append(f"　{o['name']}　KD{o['kd']:.2f}{w}")
+    return "\n".join(lines)
+
+
+def render_card(q: dict) -> bytes | None:
+    """把战绩渲染成图片：优先 PIL 卡片，失败退回「文字排版转图」，再不行返回 None。"""
+    if not q:
+        return None
+    try:
+        import r6_card  # 懒导入：无 PIL 的环境（如本地离线测试）不会因此炸掉整个模块
+        data = r6_card.render(q)
+        if data:
+            return data
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[R6] 卡片渲染失败：%s", exc)
+    try:
+        from text_image import render_text_image
+        return render_text_image(
+            format_card_text(q),
+            width=_int_env("QQ_BOT_R6_WIDTH", 900),
+            font_size=_int_env("QQ_BOT_R6_FONTSIZE", 30),
+            padding=36,
+            line_spacing=1.5,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[R6] 文字图渲染失败，退回文本：%s", exc)
+        return None

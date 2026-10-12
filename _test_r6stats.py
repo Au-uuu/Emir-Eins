@@ -108,6 +108,14 @@ check("排版含昵称/段位", "MacieJay" in text and "Diamond 2" in text)
 check("排版含本赛季 KD", "Y11S3" in text and "KD 1.08" in text)
 check("排版含常用干员", "Pulse" in text)
 
+card = r6stats.format_card_text(q)
+check("卡片含姓名/段位/本赛季", "MacieJay" in card and "Diamond 2" in card and "Y11S3" in card)
+check("卡片含近几季/常用干员", "近几季" in card and "常用干员" in card and "Pulse" in card)
+
+img = r6stats.render_card(q)
+check("render_card 不抛异常（有 PIL 则出 PNG）",
+      img is None or (isinstance(img, bytes) and img[:4] == b"\x89PNG"))
+
 before = calls["n"]
 r6stats.query("pc", "MacieJay")
 check("5 分钟内命中缓存不重复请求", calls["n"] == before, f"{before}->{calls['n']}")
