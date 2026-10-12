@@ -2215,8 +2215,11 @@ async def persona_reply(message, scope: str, content: str) -> None:
     log.info("[人格] 已回复 scope=%s: %s", scope, reply[:40])
 
 
-async def do_r6(message, text: str) -> None:
-    """R6 战绩查询。用法：/r6 [平台] 昵称（平台 pc/ps/xbox，默认 pc）。"""
+async def do_r6(message, api, scope: str, scene_id: str, text: str) -> None:
+    """R6 战绩查询。用法：/r6 [平台] 昵称（平台 pc/ps/xbox，默认 pc）。
+
+    优先发**图片**（卡片更整齐），渲染/上传失败才退回文本。
+    """
     if not r6stats.enabled():
         await message.reply(content="R6 战绩查询未启用（服务器缺 QQ_BOT_R6_KEY）")
         return
@@ -2236,6 +2239,10 @@ async def do_r6(message, text: str) -> None:
             content=f"没查到「{name}」——确认昵称拼写，或平台（pc/ps/xbox）是否正确。"
         )
         return
+    if r6stats.image_enabled():
+        image = await asyncio.to_thread(r6stats.render_card, data)
+        if image and await _reply_image_bytes(message, api, scope, scene_id, image, "r6.jpg"):
+            return
     await message.reply(content=r6stats.format_reply(data))
 
 
@@ -2266,7 +2273,7 @@ async def handle_command(message, api, scope: str, scene_id: str, content: str) 
         return True
 
     if R6_RE.match(text):
-        await do_r6(message, text)
+        await do_r6(message, api, scope, scene_id, text)
         return True
 
     # /echo、/复读 <内容> —— 复读群用户的话
