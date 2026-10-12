@@ -22,10 +22,10 @@ UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) qqbot-r6/1.0"}
 
 W = 1000
 PAD = 30
-BG = (11, 13, 17, 255)
-PANEL = (20, 23, 28, 255)
-PANEL_HI = (28, 32, 39, 255)
-BORDER = (37, 41, 48, 255)
+BG = (6, 7, 10, 255)
+PANEL = (16, 19, 24, 255)
+PANEL_HI = (23, 27, 33, 255)
+BORDER = (32, 36, 43, 255)
 FG = (240, 242, 246, 255)
 SUB = (150, 156, 167, 255)
 DIM = (99, 105, 116, 255)
@@ -204,28 +204,32 @@ def _render(q: dict) -> bytes:
         if peak.get("rp") is not None:
             pk += f"　{int(peak['rp'])} RP"
         d.text((tx, ay + 98), pk, font=_font(21), fill=DIM)
+
+    # 右侧：段位徽章 + 段位名 + RP（填满头部右侧空档）
+    ri = _fetch(q.get("rank_icon"))
+    bsz = 96
+    bx, by = W - PAD - 24 - bsz, ay + 14
+    if ri is not None:
+        canvas.alpha_composite(_rounded(ri, bsz, 12), (bx, by))
+    else:
+        d.rounded_rectangle((bx, by, bx + bsz, by + bsz), radius=12,
+                            fill=PANEL_HI, outline=BORDER, width=1)
+    rname = q.get("rank") or "未定级"
+    d.text((bx - 22 - d.textlength(rname, font=_font(28)), ay + 30), rname,
+           font=_font(28), fill=ACCENT)
+    if q.get("rp") is not None:
+        rp = f"{int(q['rp'])} RP"
+        d.text((bx - 22 - d.textlength(rp, font=_font(24)), ay + 72), rp,
+               font=_font(24), fill=SUB)
     y += hp + 16
 
     # ================= 本赛季面板 =================
     s = q.get("season") or {}
-    ph = 42 + 74 + 92 + 26
+    ph = 42 + 92 + 26
     d.rounded_rectangle((PAD, y, W - PAD, y + ph), radius=18, fill=PANEL, outline=BORDER, width=1)
     y += 20
     season_right = f"{s.get('code', '')}　{s.get('name', '')}".strip() or None
     y = _section(d, y, "本赛季", season_right)
-
-    # 段位行：[图标] 段位名（橙） + 右侧 RP
-    icon = _fetch(q.get("rank_icon"))
-    ix = PAD + 24
-    if icon is not None:
-        canvas.alpha_composite(_rounded(icon, 58, 8), (ix, y - 6))
-        ix += 74
-    d.text((ix, y), q.get("rank") or "未定级", font=_font(36), fill=ACCENT)
-    if q.get("rp") is not None:
-        rp = f"{int(q['rp'])} RP"
-        d.text((W - PAD - 24 - d.textlength(rp, font=_font(30)), y + 4), rp,
-               font=_font(30), fill=ACCENT)
-    y += 74
 
     wr = s.get("win_rate")
     tiles = []
