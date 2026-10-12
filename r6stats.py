@@ -158,6 +158,7 @@ def _season_of(seg: dict) -> dict:
     st = seg.get("stats") or {}
     meta = seg.get("metadata") or {}
     rp = _num(st.get("rankPoints"))
+    max_rp = _num(st.get("maxRankPoints"))
     matches = _num(st.get("matchesPlayed"))
     wins = _num(st.get("matchesWon"))
     losses = _num(st.get("matchesLost"))
@@ -169,12 +170,18 @@ def _season_of(seg: dict) -> dict:
         denom = wins + losses if losses is not None and wins + losses > 0 else matches
         if denom:
             wr = wins / denom * 100.0
+    # 有些赛季接口只给了「赛季最高 RP」没给当前 RP（实测 Y11S2 就是），
+    # 这时段位和展示用的 RP 都取最高值——否则「近几季」会显示成一排「—」。
+    # RP=1000 是定位赛基准，不算段位。
+    shown = rp if rp else max_rp
+    rank_txt = _zh_rank(rank_name(shown)) if (shown and shown > 1000) else None
     return {
         "code": meta.get("shortName") or meta.get("name") or "",
         "name": meta.get("seasonName") or meta.get("name") or "",
-        "rank": _zh_rank(rank_name(rp)),
+        "rank": rank_txt,
         "rp": rp,
-        "max_rp": _num(st.get("maxRankPoints")),
+        "rp_show": shown,
+        "max_rp": max_rp,
         "rank_type": meta.get("rankType"),
         "kd": _num(st.get("kdRatio")),
         "matches": matches,
@@ -305,6 +312,15 @@ def _build(plat: str, name: str) -> dict:
     # 也顺便让 stats.cc / R6Tracker 的链接好看。
     profs = account.get("profiles") or []
     canonical = profs[0].get("nameOnPlatform") if profs and isinstance(profs[0], dict) else None
+    # 生涯时长：**官方 / R6Tracker 口径**在 /v2/profile 的 overview 段里（单位：秒）。
+    # ⚠️ 千万别用 fullStats.totalsHoursPlayed —— 那是「所有 PvP 模式逐赛季相加的会话
+    # 时长」，和 TN/官方差得毫无规律（MacieJay 5887 vs 9305、mojinqiu 388 vs 180）。
+    # overview 段实测与 R6Tracker 逐一对得上：mojinqiu 180h、MacieJay 9,305h、XII-FuHua 1,266h。
+    sea_segs = ((prof.get("seasons") or {}).get("data") or {}).get("segments") or []
+    ov = next((s for s in sea_segs
+               if isinstance(s, dict) and s.get("type") == "overview"), None)
+    ov_tp = _num(_val(((ov or {}).get("stats") or {}).get("timePlayed")))
+    total_hours = round(ov_tp / 3600.0) if ov_tp else None
     # 素材：头像 + 当前段位图标（RP 历史最新一条带 imageUrl）
     avatar = account.get("profilePicture")
     rank_icon = None
@@ -391,10 +407,8 @@ def _build(plat: str, name: str) -> dict:
         "rank": rank or "未定级",
         "rp": rp,
         "max_rp": max_rp,
-        # ⚠️ 这里**故意不给「游戏时长」**：Arenyze 的 totalsHoursPlayed 是「全模式逐赛季
-        # 相加的会话时长」，和 R6Tracker/官方口径对不上，而且错得没有规律——
-        # 实测 MacieJay 9305h vs 它 5887h、Beaulo 10557h vs 它 4794h、
-        # mojinqiu 180h vs 它 388h（忽高忽低）。上游数据不可靠，宁可不显示。
+        # 生涯时长（官方口径，见上面 overview 段那段注释）；取不到就不显示
+        "total_hours": total_hours,
         "season": cur_season,
         "seasons": seasons[1:],  # 历史（新→旧，不含本赛季）
         "peak": peak,
@@ -419,6 +433,8 @@ def format_reply(q: dict) -> str:
     meta = []
     if q.get("level"):
         meta.append(f"等级 {q['level']}")
+    if q.get("total_hours"):
+        meta.append(f"总时长 {int(q['total_hours'])}h")
     if meta:
         lines.append(" ｜ ".join(meta))
 
@@ -435,7 +451,7 @@ def format_reply(q: dict) -> str:
         parts = []
         for x in hist:
             kd = f"{x['kd']:.2f}" if x.get("kd") is not None else "-"
-            rp = f"{int(x['rp'])}RP" if x.get("rp") is not None else "-"
+            rp = f"{int(x['rp_show'])}RP" if x.get("rp_show") is not None else "-"
             parts.append(f"{x['code']} {x.get('rank') or '-'} {rp}/KD{kd}")
         lines.append("近几季：" + " ｜ ".join(parts))
 
@@ -496,6 +512,8 @@ def format_card_text(q: dict) -> str:
     meta = []
     if q.get("level"):
         meta.append(f"等级 {q['level']}")
+    if q.get("total_hours"):
+        meta.append(f"总时长 {int(q['total_hours'])}h")
     if meta:
         lines.append("　".join(meta))
 
@@ -512,7 +530,7 @@ def format_card_text(q: dict) -> str:
         lines += ["", "近几季"]
         for x in hist:
             kd = f"KD{x['kd']:.2f}" if x.get("kd") is not None else "KD —"
-            rp = f"{int(x['rp'])} RP" if x.get("rp") is not None else "—"
+            rp = f"{int(x['rp_show'])} RP" if x.get("rp_show") is not None else "—"
             lines.append(f"　{x['code']}　{x.get('rank') or '—'}　{rp}　{kd}")
 
     ops = [o for o in (q.get("operators") or []) if o.get("kd") is not None][:TOP_OPERATORS]

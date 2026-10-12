@@ -85,8 +85,30 @@ QQ 官方机器人拿不到 QQ 号，只有 openid，而**单聊是 `user_openid
 也和官方比赛内时长对不上。同一份数据里 `matchesPlayed` 也失真
 （MacieJay 40135 场 / 4339h → 6.5 分/场，不可能）。
 
-**结论：这个字段不展示。** `_build()` 里删掉 `total_hours`，卡片和两种文本排版
-都不再输出；测试里加了「结果中不得出现 total_hours」的断言，防止以后又被加回来。
+**当时先删掉了**（`_build()` 去掉 `total_hours`）。后来用户提示「**网页是准的、API 不准**」，
+于是去扒 `r6.arenyze.com` 的前端（`dist/*.js`）——发现网站用的是**同一个 API 的另一个字段**：
+
+```
+/v2/profile → seasons.data.segments[type == "overview"].stats.timePlayed.value   // 单位：秒
+```
+
+实测与 R6Tracker **逐一对得上**：mojinqiu 180h、MacieJay 9,305h、XII-FuHua 1,266h
+（同一份响应里 `totalsHoursPlayed.hours` 分别给 388 / 5,887 / 1,360 —— 全错）。
+
+**结论：时长改回展示，取 overview 段。** 不需要爬虫、不需要代理、不需要育碧账号。
+
+另外修了「近几季」段位显示「—」的问题：`/v2/profile` 里有些赛季只给 `maxRankPoints`
+没给 `rankPoints`（实测 Y11S2），现在没有当前 RP 时用**赛季最高 RP** 当段位
+（RP=1000 是定位赛基准，不算段位）。
+
+### 6b. 官方 API 那条路：备而不用
+
+一度以为时长只能从育碧官方 API 拿，为此注册了测试小号、接 `siegeapi`、写了
+`r6official.py`（curl_cffi 过 DataDome + 代理出口）。结果：本机（腾讯云大陆机房 IP）
+被育碧**按 IP 限流**（`errorCode 1101 · Too many calls per IP address`，连登录都 429，
+每分钟一次连试 8 分钟全挂）；Clash 的新加坡机房节点同样 429。
+找到 `overview` 字段后这条路**不再需要**——`r6official.py` 留着当 Plan B
+（`enabled()` 要求邮箱+密码+代理三项齐全，默认关闭，失败一律返回 None 让 Arenyze 兜底）。
 
 能对上 TN 的都保留：等级（mojinqiu 88 ✓）、段位/RP、本赛季场次/胜负/KD
 （37 场 / 47% / 0.94 ✓ 与 TN 一致）。

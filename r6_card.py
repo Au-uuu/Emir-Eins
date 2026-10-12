@@ -235,6 +235,8 @@ def _render(q: dict) -> bytes:
     meta = []
     if q.get("level"):
         meta.append(f"等级 {q['level']}")
+    if q.get("total_hours"):
+        meta.append(f"总时长 {int(q['total_hours'])}h")
     d.text((cx + cw + 14, cy + 7 - t), "　".join(meta), font=f20, fill=SUB)
     peak = q.get("peak")
     if peak:
@@ -299,7 +301,7 @@ def _render(q: dict) -> bytes:
         y += 20
         y = _section(d, y, "近几季")
         for x in hist:
-            rp = f"{int(x['rp'])} RP" if x.get("rp") is not None else "—"
+            rp = f"{int(x['rp_show'])} RP" if x.get("rp_show") is not None else "—"
             kd = f"KD {x['kd']:.2f}" if x.get("kd") is not None else "KD —"
             w = (f"W/L {int(x['wins'])}/{int(x['losses'])}"
                  if x.get("wins") is not None else "W/L —")

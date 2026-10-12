@@ -38,6 +38,13 @@ PROFILE = {
     ]}]},
     "account": {"level": 3512, "profiles": [
         {"platformType": "uplay", "nameOnPlatform": "MacieJay"}]},
+    # 生涯时长的「官方口径」在这里（type=overview 的 timePlayed，单位秒）——
+    # 值随手取 MacieJay 的真实值 33,498,182 秒 = 9,305h（与 R6Tracker 一致）。
+    "seasons": {"data": {
+        "metadata": {"currentSeason": 43, "clearanceLevel": 3512},
+        "segments": [{"type": "overview", "stats": {
+            "timePlayed": {"value": 33498182, "displayValue": "9,305h"},
+            "matchesPlayed": {"value": 38024}}}]}},
     "history": {"data": {"history": {"data": [
         ["2026-10-02T10:00:00+00:00", {"value": 4347, "metadata": {"rank": "Diamond 2"}}],
         ["2026-10-01T10:00:00+00:00", {"value": 4000, "metadata": {"rank": "Diamond 2"}}],
@@ -136,8 +143,17 @@ check("psn → psn 平台映射",
       any("/r6siege/profile/psn/X/overview" in u for u in r6stats.site_urls("psn", "X", None)))
 check("无 profile_id 时只给 R6Tracker", len(r6stats.site_urls("uplay", "X", None)) == 1)
 check("解析等级", q and q["level"] == 3512)
-check("不再输出游戏时长（上游口径不可靠，已从展示里删掉）",
-      q is not None and "total_hours" not in q)
+check("玩法时长取 overview 段（官方/TN 口径，秒→时）", q and q["total_hours"] == 9305,
+      str(q and q.get("total_hours")))
+check("不用 totalsHoursPlayed（那个口径不准，fixture 里是 5706）",
+      q and q["total_hours"] != 5706)
+
+_fb = r6stats._season_of({"stats": {"maxRankPoints": {"value": 4347}}, "attributes": {}})
+check("赛季只给最高 RP 时也能给出段位（否则近几季一排「—」）",
+      _fb["rank"] == "钻石 2" and _fb["rp_show"] == 4347, str((_fb["rank"], _fb["rp_show"])))
+check("RP=1000（定位赛基准）不算段位",
+      r6stats._season_of({"stats": {"maxRankPoints": {"value": 1000}},
+                          "attributes": {}})["rank"] is None)
 check("本赛季取最新（Y11S3）", q and q["season"]["code"] == "Y11S3")
 check("本赛季胜负/胜率（分母用 胜+负，与 TN 一致）",
       q and q["season"]["wins"] == 112 and q["season"]["losses"] == 107
