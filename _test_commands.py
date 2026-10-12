@@ -230,6 +230,41 @@ async def main() -> int:
           await bot.handle_command(bare, FakeApi(), "group", "G_TEST", "彩六好玩吗") is False
           and bare.replies == [])
 
+    print("\n[8c] R6 平台解析与失败提示（查无此人 vs 接口抽风）")
+    check("_r6_split 不带平台 → 默认 uplay",
+          bot._r6_split("MacieJay") == ("uplay", "MacieJay"))
+    check("_r6_split 带平台 ps → psn", bot._r6_split("ps 张三") == ("psn", "张三"))
+    check("_r6_split 只写平台 → 昵称为空", bot._r6_split("pc") == ("uplay", ""))
+
+    os.environ["QQ_BOT_R6_KEY"] = "test-key"
+    mu = FakeMessage("/r6 pc")
+    await bot.handle_command(mu, FakeApi(), "group", "G_TEST", "/r6 pc")
+    check("只写平台 → 提示用法（不再拿 pc 去查）",
+          any("用法" in t for t in mu.text_replies), str(mu.text_replies))
+
+    _real_query = bot.r6stats.query
+
+    def _raise_unavailable(*a, **k):
+        raise bot.r6stats.R6Unavailable("HTTP 503 fake")
+
+    bot.r6stats.query = _raise_unavailable
+    mq = FakeMessage("/r6 Somebody")
+    await bot.handle_command(mq, FakeApi(), "group", "G_TEST", "/r6 Somebody")
+    check("接口抽风 → 明说「不是昵称写错」",
+          any("抽风" in t for t in mq.text_replies), str(mq.text_replies))
+
+    def _raise_notfound(*a, **k):
+        raise bot.r6stats.R6NotFound("HTTP 404 fake")
+
+    bot.r6stats.query = _raise_notfound
+    mq2 = FakeMessage("/r6 Somebody")
+    await bot.handle_command(mq2, FakeApi(), "group", "G_TEST", "/r6 Somebody")
+    check("查无此人 → 提示确认拼写/平台",
+          any("没查到" in t and "ps" in t for t in mq2.text_replies), str(mq2.text_replies))
+
+    bot.r6stats.query = _real_query
+    os.environ.pop("QQ_BOT_R6_KEY", None)
+
     print("\n[9] 斜杠强制：图库/关联/私有/公开 必须带 /")
     for bare in ("图库", "关联 a b", "取消关联 a", "查找关联 a", "私有 x", "公开 x"):
         bm = FakeMessage(bare)

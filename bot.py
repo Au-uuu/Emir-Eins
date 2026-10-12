@@ -2323,11 +2323,50 @@ async def persona_reply(message, scope: str, content: str) -> None:
 
 
 def _r6_split(args: str) -> tuple[str, str]:
-    """把「[平台] 昵称」拆成 (platform, name)；平台缺省 uplay。"""
-    parts = args.split(maxsplit=1)
+    """把「[平台] 昵称」拆成 (platform, name)；平台缺省 uplay。
+
+    只写了个平台名（如 `/r6 pc`）时返回空昵称，让调用方提示用法——
+    以前会把 "pc" 当昵称拿去查，然后回一句莫名其妙的「没查到 pc」。
+    """
+    token = (args or "").strip()
+    parts = token.split(maxsplit=1)
     if len(parts) == 2 and r6stats.normalize_platform(parts[0]):
         return r6stats.normalize_platform(parts[0]), parts[1].strip()
-    return "uplay", args
+    if parts and r6stats.normalize_platform(parts[0]):
+        return "uplay", ""
+    return "uplay", token
+
+
+R6_USAGE = "用法：/r6 [平台] 昵称　平台：pc / ps / xbox（默认 pc）"
+
+
+async def _r6_fetch(message, platform: str, name: str):
+    """查一次 R6；失败时**已经回复过用户**，返回 None。
+
+    区分「查无此人」和「接口抽风」是必须的：Arenyze 偶发 503 时，
+    以前一律回「没查到…确认拼写」，害得用户去改一个本来正确的昵称。
+    """
+    try:
+        data = await asyncio.to_thread(r6stats.query, platform, name)
+    except r6stats.R6NotFound:
+        log.info("[R6] 查无此人：%s/%s", platform, name)
+        await message.reply(
+            content=f"没查到「{name}」——这个昵称在 {r6stats.platform_label(platform)} 上没有。\n"
+            f"先确认拼写；如果这号其实在主机上，带上平台再查：/r6 ps 昵称、/r6 xbox 昵称。"
+        )
+        return None
+    except r6stats.R6Unavailable as exc:
+        log.warning("[R6] 接口不稳定：%s", exc)
+        await message.reply(
+            content="R6 数据接口刚才抽风了（超时 / 503），自动重试也没成功——"
+            "过十几秒再发一次就行，不是你的昵称写错了。"
+        )
+        return None
+    if data:
+        return data
+    log.warning("[R6] 查询没拿到数据（未启用？）platform=%s name=%s", platform, name[:32])
+    await message.reply(content="R6 查询没拿到数据，稍后再试一次～")
+    return None
 
 
 async def do_r6(message, api, scope: str, scene_id: str, text: str) -> None:
@@ -2370,11 +2409,11 @@ async def do_r6(message, api, scope: str, scene_id: str, text: str) -> None:
         if not name:
             await message.reply(content="用法：/r6绑定 [平台] 昵称　平台：pc / ps / xbox（默认 pc）")
             return
-        data = await asyncio.to_thread(r6stats.query, platform, name)
+        data = await _r6_fetch(message, platform, name)
         if not data:
-            await message.reply(content=f"没查到「{name}」——确认昵称/平台后再绑。")
             return
-        await bind_store.bind(openid, platform, name, data.get("profile_id"))
+        # 存接口返回的规范昵称（大小写会被纠正），这样外链也好看
+        await bind_store.bind(openid, platform, data["name"], data.get("profile_id"))
         await message.reply(
             content=f"已绑定：{name}（{data['platform_label']} · {data['rank']}）。"
             f"之后直接发 /r6 就能查。再绑定一次会直接覆盖（不用解绑）；"
@@ -2394,12 +2433,13 @@ async def do_r6(message, api, scope: str, scene_id: str, text: str) -> None:
     else:
         platform, name = _r6_split(args)
 
+    if not name:
+        await message.reply(content=R6_USAGE)
+        return
+
     log.info("[R6] 查询 platform=%s name=%s", platform, name[:32])
-    data = await asyncio.to_thread(r6stats.query, platform, name)
+    data = await _r6_fetch(message, platform, name)
     if not data:
-        await message.reply(
-            content=f"没查到「{name}」——确认昵称拼写，或平台（pc/ps/xbox）是否正确。"
-        )
         return
     if r6stats.image_enabled():
         image = await asyncio.to_thread(r6stats.render_card, data)

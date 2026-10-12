@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -63,13 +64,36 @@ def normalize_platform(token: str | None) -> str | None:
     return PLATFORM_ALIASES.get((token or "").strip().lower())
 
 
+class R6NotFound(Exception):
+    """Arenyze 明确回了 404：这个平台上没有这个昵称。"""
+
+
+class R6Unavailable(Exception):
+    """接口超时 / 5xx / 网络故障——**不是**「没这个人」。
+
+    这两件事必须分开：Arenyze 会偶发 503（实测同一个人 30 秒前 503、30 秒后正常），
+    以前一律回「没查到…检查拼写」，会把用户带到沟里去。
+    """
+
+
 def _get(path: str, **params):
     url = BASE + path + "?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(
         url, headers={"api-key": _key(), "User-Agent": "qqbot-r6/1.0"}
     )
-    with urllib.request.urlopen(req, timeout=_timeout()) as resp:
-        return json.loads(resp.read().decode("utf-8", "replace"))
+    try:
+        with urllib.request.urlopen(req, timeout=_timeout()) as resp:
+            return json.loads(resp.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise R6NotFound(f"HTTP 404 {path}") from exc
+        raise R6Unavailable(f"HTTP {exc.code} {path}") from exc
+    except Exception as exc:  # 超时 / DNS / 连接被拒 / JSON 坏掉
+        raise R6Unavailable(f"{type(exc).__name__}: {exc}") from exc
+
+
+def platform_label(platform: str) -> str:
+    return PLATFORM_LABEL.get(platform, platform or "")
 
 
 def _val(v):
@@ -154,8 +178,49 @@ def _season_of(seg: dict) -> dict:
     }
 
 
+def _fetch_pair(name: str, plat: str, attempts: int = 2):
+    """并发查 profile + fullstats 两个接口。
+
+    - 任一接口回 404 → `R6NotFound`（查无此人）
+    - 其它失败（503 / 超时 / 网络）→ 隔一会儿重试一次，仍不行则 `R6Unavailable`
+
+    注：实测「不存在的昵称」是一个接口回 404、另一个回 503，所以判定顺序是
+    **先看有没有 404**，再看剩下的是不是接口故障。
+    """
+    import concurrent.futures as _cf
+
+    last: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        errs: list[Exception] = []
+        results: list = []
+        with _cf.ThreadPoolExecutor(max_workers=2) as ex:
+            futs = [
+                ex.submit(_get, "/v2/profile", nameOnPlatform=name, platformType=plat),
+                ex.submit(_get, "/v2/fullstats", nameOnPlatform=name, platformType=plat),
+            ]
+            for f in futs:
+                try:
+                    results.append(f.result())
+                except Exception as exc:  # noqa: BLE001
+                    errs.append(exc)
+        if any(isinstance(e, R6NotFound) for e in errs):
+            raise R6NotFound(f"{plat}/{name}")
+        if not errs:
+            return results[0], results[1]
+        last = errs[0]
+        log.info("[R6] 第 %d/%d 次查询失败（%s）%s", attempt, attempts, last,
+                 "，重试" if attempt < attempts else "，放弃")
+        if attempt < attempts:
+            time.sleep(1.5)
+    raise R6Unavailable(str(last))
+
+
 def query(platform: str, name: str) -> dict | None:
-    """查一个玩家的战绩；未启用/参数错/失败返回 None。"""
+    """查一个玩家的战绩。
+
+    查无此人 → 抛 `R6NotFound`；接口故障 → 抛 `R6Unavailable`；
+    未启用 / 昵称为空 → 返回 None。
+    """
     if not enabled():
         return None
     plat = normalize_platform(platform) or DEFAULT_PLATFORM
@@ -166,17 +231,13 @@ def query(platform: str, name: str) -> dict | None:
     hit = _cache.get(ck)
     if hit and time.time() - hit[0] < CACHE_TTL:
         return hit[1]
-    try:
-        import concurrent.futures as _cf
-        with _cf.ThreadPoolExecutor(max_workers=2) as ex:
-            f_prof = ex.submit(_get, "/v2/profile", nameOnPlatform=name, platformType=plat)
-            f_full = ex.submit(_get, "/v2/fullstats", nameOnPlatform=name, platformType=plat)
-            prof, full = f_prof.result(), f_full.result()
-    except Exception as exc:  # noqa: BLE001
-        log.info("[R6] 查询失败：%s", exc)
-        return None
+    prof, full = _fetch_pair(name, plat)
 
     account = prof.get("account") or {}
+    # 接口会把昵称纠正成规范写法（大小写、别人改名前的老写法），用它更准，
+    # 也顺便让 stats.cc / R6Tracker 的链接好看。
+    profs = account.get("profiles") or []
+    canonical = profs[0].get("nameOnPlatform") if profs and isinstance(profs[0], dict) else None
     # 素材：头像 + 当前段位图标（RP 历史最新一条带 imageUrl）
     avatar = account.get("profilePicture")
     rank_icon = None
@@ -253,7 +314,7 @@ def query(platform: str, name: str) -> dict | None:
                 rp_history.append((e[0], v))
 
     out = {
-        "name": name,
+        "name": canonical or name,
         "platform": plat,
         "platform_label": PLATFORM_LABEL.get(plat, plat),
         "avatar": avatar,

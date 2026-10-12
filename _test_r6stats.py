@@ -4,6 +4,8 @@
 """
 import os
 import sys
+import urllib.error
+import urllib.request
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -33,7 +35,8 @@ PROFILE = {
         {"board_id": "ranked", "full_profiles": [{"profile": {
             "rank_points": 4347, "max_rank_points": 4442}}]},
     ]}]},
-    "account": {"level": 3512},
+    "account": {"level": 3512, "profiles": [
+        {"platformType": "uplay", "nameOnPlatform": "MacieJay"}]},
     "history": {"data": {"history": {"data": [
         ["2026-10-02T10:00:00+00:00", {"value": 4347, "metadata": {"rank": "Diamond 2"}}],
         ["2026-10-01T10:00:00+00:00", {"value": 4000, "metadata": {"rank": "Diamond 2"}}],
@@ -86,6 +89,7 @@ def boom_get(path, **params):
     raise OSError("网络挂了")
 
 
+_REAL_GET = r6stats._get          # 打桩前留一份真身，后面测 HTTP 分类要用
 r6stats._get = fake_get
 r6stats._cache.clear()
 r6stats._ranks_cache = None
@@ -115,6 +119,10 @@ check("历史最高（RP 时代）", q and q.get("peak") and q["peak"]["code"] =
       and int(q["peak"]["rp"]) == 4442)
 check("RP 序列旧→新", q and [int(v) for _, v in q["rp_history"]] == [4000, 4347])
 check("解析 profile_id（stats.cc 链接用）", q and q.get("profile_id") == "pid-test")
+check("昵称取接口的规范写法（大小写纠正）",
+      (r6stats.query("pc", "MACIEJAY") or {}).get("name") == "MacieJay")
+check("平台中文标签 pc→PC / ps→PlayStation",
+      r6stats.platform_label("uplay") == "PC" and r6stats.platform_label("psn") == "PlayStation")
 
 urls = r6stats.site_urls("uplay", "MacieJay", "pid-test")
 check("R6Tracker 链接", any("r6.tracker.network/profile/pc/MacieJay" in u for u in urls), str(urls))
@@ -148,7 +156,54 @@ check("5 分钟内命中缓存不重复请求", calls["n"] == before, f"{before}
 
 r6stats._get = boom_get
 r6stats._cache.clear()
-check("网络失败 → None", r6stats.query("uplay", "Anyone") is None)
+
+# --- 查无此人 vs 接口抽风：必须分开，否则 503 会被说成「你昵称写错了」 ---
+
+
+def notfound_get(path, **params):
+    raise r6stats.R6NotFound("HTTP 404 fake")
+
+
+r6stats._get = notfound_get
+r6stats._cache.clear()
+try:
+    r6stats.query("uplay", "Nobody")
+    check("404 → 抛 R6NotFound", False)
+except r6stats.R6NotFound:
+    check("404 → 抛 R6NotFound", True)
+except Exception as exc:  # noqa: BLE001
+    check("404 → 抛 R6NotFound", False, repr(exc))
+
+r6stats._get = boom_get
+r6stats._cache.clear()
+try:
+    r6stats.query("uplay", "Anyone")
+    check("网络/503 → 抛 R6Unavailable", False)
+except r6stats.R6Unavailable:
+    check("网络/503 → 抛 R6Unavailable", True)
+except Exception as exc:  # noqa: BLE001
+    check("网络/503 → 抛 R6Unavailable", False, repr(exc))
+
+# _get 自己也得按 HTTP 状态码分类
+_real_urlopen = urllib.request.urlopen
+
+
+def _fake_urlopen_code(code):
+    def _open(req, timeout=None):
+        raise urllib.error.HTTPError(req.full_url, code, "x", {}, None)
+    return _open
+
+
+for _code, _want in ((404, r6stats.R6NotFound), (503, r6stats.R6Unavailable)):
+    urllib.request.urlopen = _fake_urlopen_code(_code)
+    try:
+        _REAL_GET("/v2/profile", nameOnPlatform="X", platformType="uplay")
+        check(f"_get HTTP {_code} → {_want.__name__}", False)
+    except _want:
+        check(f"_get HTTP {_code} → {_want.__name__}", True)
+    except Exception as exc:  # noqa: BLE001
+        check(f"_get HTTP {_code} → {_want.__name__}", False, repr(exc))
+urllib.request.urlopen = _real_urlopen
 
 print(f"\n{'=' * 50}")
 print(f"失败 {failures} 项")
