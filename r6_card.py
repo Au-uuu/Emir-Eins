@@ -149,56 +149,56 @@ def _render(q: dict) -> bytes:
     avatar = _circle(avatar, AVATAR)
     canvas.paste(avatar, (PAD, y), avatar)
     tx = PAD + AVATAR + 30
-    d.text((tx, y - 6), q["name"], font=_font(46), fill=FG)
+    d.text((tx, y - 8), q["name"], font=_font(46), fill=FG)
     meta = []
     if q.get("level"):
         meta.append(f"等级 {q['level']}")
     if q.get("total_hours"):
         meta.append(f"总时长 {int(q['total_hours'])}h")
-    d.text((tx, y + 62), q["platform_label"] + ("　·　" + "　·　".join(meta) if meta else ""),
+    d.text((tx, y + 54), q["platform_label"] + ("　·　" + "　·　".join(meta) if meta else ""),
            font=_font(26), fill=SUB)
+    peak = q.get("peak")
+    if peak:
+        pk = f"历史最高　{peak.get('code') or '—'}　{peak.get('rank') or '—'}"
+        if peak.get("rp") is not None:
+            pk += f"　{int(peak['rp'])} RP"
+        d.text((tx, y + 92), pk, font=_font(24), fill=FOOT)
     y += AVATAR + 30
     y = _hr(d, y)
 
-    # ---------- 最上面一栏：段位 + 本赛季 + 历史最高 ----------
+    # ---------- 本赛季（右上角放赛季标识，填满那一栏） ----------
     icon = _fetch(q.get("rank_icon"))
     ix = PAD
     if icon is not None:
         try:
             ic = icon.resize((62, 62), Image.LANCZOS)
-            canvas.paste(ic, (ix, y - 12), ic)
+            canvas.paste(ic, (ix, y - 10), ic)
             ix += 76
         except Exception:  # noqa: BLE001
             pass
     seg = q.get("rank") or "未定级"
     if q.get("rp") is not None:
         seg += f"　{int(q['rp'])} RP"
-    d.text((ix, y - 4), seg, font=_font(34), fill=ACCENT)
-    y += 60
+    d.text((ix, y - 2), seg, font=_font(34), fill=ACCENT)
 
     s = q.get("season")
     if s and s.get("matches"):
-        d.text((PAD, y), f"本赛季 {s['code']} {s['name']}".rstrip(), font=_font(28), fill=FG)
-        y += 44
-        wr = f"{int(s['wins'])}胜{int(s['losses'])}负" if s.get("wins") is not None else ""
+        head = f"本赛季 {s['code']} {s['name']}".rstrip()
+        hw = d.textlength(head, font=_font(28))
+        d.text((W - PAD - hw, y + 6), head, font=_font(28), fill=FG)
+        y += 54
+        wl = (f"W/L {int(s['wins'])}/{int(s['losses'])}"
+              if s.get("wins") is not None else "")
         pct = f"（{s['win_rate']:.0f}%）" if s.get("win_rate") is not None else ""
-        parts = [f"{int(s['matches'])} 场", f"{wr}{pct}"]
+        parts = [f"{int(s['matches'])} 场", f"{wl}{pct}"]
         if s.get("kd") is not None:
             parts.append(f"KD {s['kd']:.2f}")
-        if s.get("kda") is not None:
-            parts.append(f"KDA {s['kda']:.2f}")
         if s.get("hs") is not None:
-            parts.append(f"爆头 {s['hs']:.0f}%")
+            parts.append(f"HS {s['hs']:.0f}%")
         d.text((PAD + 14, y), "　".join(parts), font=_font(26), fill=SUB)
         y += 44
-
-    peak = q.get("peak")
-    if peak:
-        pk = f"历史最高　{peak.get('code') or '—'}　{peak.get('rank') or '—'}"
-        if peak.get("rp") is not None:
-            pk += f"　{int(peak['rp'])} RP"
-        d.text((PAD, y), pk, font=_font(26), fill=SUB)
-        y += 40
+    else:
+        y += 56
     y = _hr(d, y)
 
     # ---------- 近几季（每行：赛季/段位/RP/KD/KDA/胜率/爆头率） ----------
@@ -209,16 +209,16 @@ def _render(q: dict) -> bytes:
         for x in hist:
             rp = f"{int(x['rp'])} RP" if x.get("rp") is not None else "—"
             kd = f"{x['kd']:.2f}" if x.get("kd") is not None else "—"
-            kda = f"{x['kda']:.2f}" if x.get("kda") is not None else "—"
-            wr = f"{x['win_rate']:.0f}%" if x.get("win_rate") is not None else "—"
+            wl = (f"{int(x['wins'])}/{int(x['losses'])}"
+                  if x.get("wins") is not None else "—")
+            pct = f"（{x['win_rate']:.0f}%）" if x.get("win_rate") is not None else ""
             hs = f"{x['hs']:.0f}%" if x.get("hs") is not None else "—"
             d.text((PAD + 14, y), str(x.get("code") or "—"), font=_font(24), fill=SUB)
             d.text((PAD + 120, y), str(x.get("rank") or "—"), font=_font(24), fill=FG)
             d.text((PAD + 268, y), rp, font=_font(24), fill=SUB)
             d.text((PAD + 400, y), f"KD {kd}", font=_font(24), fill=SUB)
-            d.text((PAD + 512, y), f"KDA {kda}", font=_font(24), fill=SUB)
-            d.text((PAD + 640, y), f"胜 {wr}", font=_font(24), fill=SUB)
-            d.text((PAD + 760, y), f"爆头 {hs}", font=_font(24), fill=SUB)
+            d.text((PAD + 500, y), f"W/L {wl}{pct}", font=_font(24), fill=SUB)
+            d.text((PAD + 780, y), f"HS {hs}", font=_font(24), fill=SUB)
             y += 40
         y += 6
     y = _hr(d, y)
