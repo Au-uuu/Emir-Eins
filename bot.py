@@ -29,6 +29,7 @@ import help_image
 import kb
 import names
 import persona
+import r6stats
 import sensitive
 import tagger
 import watchdog
@@ -267,6 +268,7 @@ HELP_TEXT = (
     "【公告】/公告　查看本群推送开关（默认关，每个游戏独立）\n"
     "　　　　/公告 开|关 明日方舟|终末地|全部　版本更新推送\n"
     "　　　　/公告 查 [游戏]　看最新公告（含活动类）\n"
+    "【R6】/r6 [平台] 昵称　彩虹六号战绩（平台 pc/ps/xbox，默认 pc）\n"
     "\n"
     "快捷：只有「添加 / 删除 / 来只」可省略斜杠（添加、删除需引用图片），\n"
     "　　　其余指令必须带「/」。图库名不能是纯数字。\n"
@@ -320,6 +322,8 @@ DELETE_GALLERY_RE = re.compile(r"^/删除图库\s*(.*)$", re.DOTALL)
 CARD_ADD_RE = re.compile(r"^/添加名片\s*(.*)$", re.DOTALL)
 CARD_RE = re.compile(r"^/游戏名片\s*(.*)$", re.DOTALL)
 CARD_DEL_RE = re.compile(r"^/删除名片\s*(.*)$", re.DOTALL)
+# R6 战绩查询（见 r6stats.py）
+R6_RE = re.compile(r"^/r6(?:战绩)?\s*(.*)$", re.IGNORECASE | re.DOTALL)
 
 # 管理员登记指令（**只在私聊可用，且不对外展示**）：「管理员 <口令>」
 ADMIN_RE = re.compile(r"^/?管理员\s*(.*)$", re.DOTALL)
@@ -2210,6 +2214,30 @@ async def persona_reply(message, scope: str, content: str) -> None:
     log.info("[人格] 已回复 scope=%s: %s", scope, reply[:40])
 
 
+async def do_r6(message, text: str) -> None:
+    """R6 战绩查询。用法：/r6 [平台] 昵称（平台 pc/ps/xbox，默认 pc）。"""
+    if not r6stats.enabled():
+        await message.reply(content="R6 战绩查询未启用（服务器缺 QQ_BOT_R6_KEY）")
+        return
+    m = R6_RE.match(text)
+    args = ((m.group(1) if m else "") or "").strip()
+    parts = args.split(maxsplit=1)
+    platform, name = None, args
+    if len(parts) == 2 and r6stats.normalize_platform(parts[0]):
+        platform, name = parts[0], parts[1].strip()
+    if not name:
+        await message.reply(content="用法：/r6 [平台] 昵称　平台：pc / ps / xbox（默认 pc）")
+        return
+    log.info("[R6] 查询 platform=%s name=%s", platform or "uplay", name[:32])
+    data = await asyncio.to_thread(r6stats.query, platform or "uplay", name)
+    if not data:
+        await message.reply(
+            content=f"没查到「{name}」——确认昵称拼写，或平台（pc/ps/xbox）是否正确。"
+        )
+        return
+    await message.reply(content=r6stats.format_reply(data))
+
+
 async def handle_command(message, api, scope: str, scene_id: str, content: str) -> bool:
     """
     处理指令。返回 True 表示已回复，False 表示不是指令。
@@ -2234,6 +2262,10 @@ async def handle_command(message, api, scope: str, scene_id: str, content: str) 
 
     if cmd in ("/ping", "/在线", "在线"):
         await message.reply(content="pong 🏓")
+        return True
+
+    if R6_RE.match(text):
+        await do_r6(message, text)
         return True
 
     # /echo、/复读 <内容> —— 复读群用户的话
