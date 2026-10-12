@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -39,6 +40,8 @@ PLATFORM_LABEL = {"uplay": "PC", "psn": "PlayStation", "xbl": "Xbox"}
 
 _cache: dict[tuple[str, str], tuple[float, dict]] = {}
 _ranks_cache: list | None = None
+_refreshing: set[tuple[str, str]] = set()   # 正在后台刷新的玩家（去重，别重复打接口）
+_refresh_lock = threading.Lock()
 
 
 def _env(name: str, default: str = "") -> str:
@@ -215,11 +218,60 @@ def _fetch_pair(name: str, plat: str, attempts: int = 2):
     raise R6Unavailable(str(last))
 
 
+def is_cached(platform: str, name: str) -> bool:
+    """这个玩家在当前进程里有缓存吗？
+
+    有缓存 = 走 stale-while-revalidate，**立刻**能出图，不用先回一句「正在查」。
+    """
+    plat = normalize_platform(platform) or DEFAULT_PLATFORM
+    return (plat, (name or "").strip().lower()) in _cache
+
+
+def _refresh_async(ck, name: str, plat: str) -> None:
+    """后台刷新一条过期缓存（stale-while-revalidate）。
+
+    同一玩家同时只跑一个刷新线程；失败就继续沿用旧数据——宁可旧，不可卡。
+    """
+    with _refresh_lock:
+        if ck in _refreshing:
+            return
+        _refreshing.add(ck)
+
+    def _work():
+        try:
+            _cache[ck] = (time.time(), _build(plat, name))
+        except Exception as exc:  # noqa: BLE001
+            log.info("[R6] 后台刷新失败（继续用旧数据）：%s", exc)
+        finally:
+            with _refresh_lock:
+                _refreshing.discard(ck)
+
+    threading.Thread(target=_work, daemon=True, name="r6-refresh").start()
+
+
+def warm_up() -> None:
+    """启动后台预热：段位表（`/ranks`，约 2-3 秒，每个进程只拉一次）。
+
+    不预热的话，**第一个**来查 R6 的人要额外等这一下。
+    """
+    if not enabled():
+        return
+    try:
+        rank_name(0)
+        log.info("[R6] 段位表预热完成")
+    except Exception as exc:  # noqa: BLE001
+        log.info("[R6] 段位表预热失败：%s", exc)
+
+
 def query(platform: str, name: str) -> dict | None:
     """查一个玩家的战绩。
 
     查无此人 → 抛 `R6NotFound`；接口故障 → 抛 `R6Unavailable`；
     未启用 / 昵称为空 → 返回 None。
+
+    缓存策略是 **stale-while-revalidate**：有缓存就立刻返回（哪怕刚过期），
+    过期那条丢给后台线程刷新——用户永远不用为「刷新」等 Arenyze。
+    于是只有**本进程第一次查某个玩家**才真的慢（Arenyze 要现拉育碧的数据）。
     """
     if not enabled():
         return None
@@ -229,8 +281,18 @@ def query(platform: str, name: str) -> dict | None:
         return None
     ck = (plat, name.lower())
     hit = _cache.get(ck)
-    if hit and time.time() - hit[0] < CACHE_TTL:
+    if hit:
+        if time.time() - hit[0] < CACHE_TTL:
+            return hit[1]
+        _refresh_async(ck, name, plat)
         return hit[1]
+    out = _build(plat, name)
+    _cache[ck] = (time.time(), out)
+    return out
+
+
+def _build(plat: str, name: str) -> dict:
+    """真正去 Arenyze 拉两个接口并归一成卡片/文本要的结构（与缓存无关）。"""
     prof, full = _fetch_pair(name, plat)
 
     account = prof.get("account") or {}
@@ -313,7 +375,7 @@ def query(platform: str, name: str) -> dict | None:
             if v is not None:
                 rp_history.append((e[0], v))
 
-    out = {
+    return {
         "name": canonical or name,
         "platform": plat,
         "platform_label": PLATFORM_LABEL.get(plat, plat),
@@ -331,8 +393,6 @@ def query(platform: str, name: str) -> dict | None:
         "rp_history": rp_history,
         "operators": operators[:CARD_OPERATORS],
     }
-    _cache[ck] = (time.time(), out)
-    return out
 
 
 def format_reply(q: dict) -> str:

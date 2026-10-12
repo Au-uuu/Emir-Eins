@@ -8,8 +8,11 @@
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 import io
 import logging
+import os
+import time
 import urllib.request
 
 from PIL import Image, ImageDraw
@@ -36,6 +39,35 @@ RED = (232, 104, 104, 255)
 _CACHE: dict[str, bytes] = {}   # 头像/段位图标的内存缓存（URL -> 原始字节）
 _FONTS: dict[int, object] = {}  # 字号 -> 字体（_load_cjk_font 每次重读文件，必须缓存）
 
+# 素材再落一份到磁盘：内存缓存重启就没了，而头像/段位图标要联网下载（实测首次 ~2.5 秒）。
+# 磁盘缓存只当「预热」，过期或读坏了就重新下，不影响正确性。
+_ASSET_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "r6assets")
+_ASSET_TTL = 7 * 24 * 3600.0
+
+
+def _asset_path(url: str) -> str:
+    return os.path.join(_ASSET_DIR, hashlib.sha1(url.encode("utf-8")).hexdigest() + ".bin")
+
+
+def _asset_get(url: str) -> bytes | None:
+    try:
+        p = _asset_path(url)
+        if time.time() - os.path.getmtime(p) > _ASSET_TTL:
+            return None
+        with open(p, "rb") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def _asset_put(url: str, raw: bytes) -> None:
+    try:
+        os.makedirs(_ASSET_DIR, exist_ok=True)
+        with open(_asset_path(url), "wb") as f:
+            f.write(raw)
+    except OSError as exc:
+        log.info("[R6卡] 素材落盘失败：%s", exc)
+
 
 def _font(size: int):
     f = _FONTS.get(size)
@@ -48,7 +80,7 @@ def _font(size: int):
 def _fetch(url: str | None) -> Image.Image | None:
     if not url:
         return None
-    raw = _CACHE.get(url)
+    raw = _CACHE.get(url) or _asset_get(url)
     if raw is None:
         last = None
         for _ in range(3):
@@ -63,7 +95,8 @@ def _fetch(url: str | None) -> Image.Image | None:
         if raw is None:
             log.info("[R6卡] 素材下载失败：%s", last)
             return None
-        _CACHE[url] = raw
+        _asset_put(url, raw)
+    _CACHE[url] = raw
     try:
         return Image.open(io.BytesIO(raw)).convert("RGBA")
     except Exception as exc:  # noqa: BLE001

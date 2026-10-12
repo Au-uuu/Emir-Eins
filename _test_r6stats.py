@@ -4,6 +4,7 @@
 """
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -157,6 +158,43 @@ check("render_card 不抛异常（有 PIL 则出 PNG）",
 before = calls["n"]
 r6stats.query("pc", "MacieJay")
 check("5 分钟内命中缓存不重复请求", calls["n"] == before, f"{before}->{calls['n']}")
+
+# --- stale-while-revalidate：过期缓存也**秒回**，刷新丢给后台线程 ---
+print("\n-- 缓存策略（stale-while-revalidate）--")
+r6stats._get = fake_get
+r6stats._cache.clear()
+check("查询前 is_cached=False", not r6stats.is_cached("uplay", "SwrTest"))
+q1 = r6stats.query("uplay", "SwrTest")
+check("首次查询后 is_cached=True", r6stats.is_cached("uplay", "SwrTest"))
+
+_ck = ("uplay", "swrtest")
+r6stats._cache[_ck] = (time.time() - 3600, q1)     # 假装放了一小时
+_before = calls["n"]
+q2 = r6stats.query("uplay", "SwrTest")
+check("过期缓存立刻返回旧数据（不打接口）", q2 is q1 and calls["n"] == _before,
+      f"calls {_before}->{calls['n']}")
+_deadline = time.time() + 3
+while calls["n"] == _before and time.time() < _deadline:
+    time.sleep(0.05)
+check("后台线程去把数据刷新了", calls["n"] > _before, f"calls {_before}->{calls['n']}")
+
+
+def _fail_pair(*a, **k):
+    raise r6stats.R6Unavailable("fake")
+
+
+_real_fetch_pair = r6stats._fetch_pair
+r6stats._fetch_pair = _fail_pair
+r6stats._cache[_ck] = (time.time() - 3600, q1)
+r6stats.query("uplay", "SwrTest")
+time.sleep(0.6)
+check("后台刷新失败仍保留旧数据（宁可旧不可卡）", r6stats._cache[_ck][1] is q1)
+r6stats._fetch_pair = _real_fetch_pair
+
+r6stats._get = fake_get
+r6stats._ranks_cache = None
+r6stats.warm_up()
+check("warm_up 预热了段位表", bool(r6stats._ranks_cache))
 
 r6stats._get = boom_get
 r6stats._cache.clear()

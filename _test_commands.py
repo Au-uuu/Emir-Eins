@@ -250,6 +250,8 @@ async def main() -> int:
     bot.r6stats.query = _raise_unavailable
     mq = FakeMessage("/r6 Somebody")
     await bot.handle_command(mq, FakeApi(), "group", "G_TEST", "/r6 Somebody")
+    check("冷查询先回一句「正在查」（别让用户以为卡死）",
+          any("正在查" in t for t in mq.text_replies), str(mq.text_replies))
     check("接口抽风 → 明说「不是昵称写错」",
           any("抽风" in t for t in mq.text_replies), str(mq.text_replies))
 

@@ -2346,6 +2346,12 @@ async def _r6_fetch(message, platform: str, name: str):
     区分「查无此人」和「接口抽风」是必须的：Arenyze 偶发 503 时，
     以前一律回「没查到…确认拼写」，害得用户去改一个本来正确的昵称。
     """
+    if not r6stats.is_cached(platform, name):
+        # 冷查询要等 Arenyze 现拉数据（实测 3~9 秒），先回一句，别让用户以为机器人卡死了。
+        # 被动回复每条消息最多能回 5 次，多这一句不心疼。
+        await message.reply(
+            content=f"🔍 正在查 {name}…（第一次查要等几秒，之后 5 分钟内秒回）"
+        )
     try:
         data = await asyncio.to_thread(r6stats.query, platform, name)
     except r6stats.R6NotFound:
@@ -2592,6 +2598,7 @@ class MyClient(botpy.Client):
         self._watchdog_task: asyncio.Task | None = None
         self._news_task: asyncio.Task | None = None
         self._notice_task: asyncio.Task | None = None
+        self._r6_warm_task: asyncio.Task | None = None
 
     async def on_ready(self):
         log.info("机器人「%s」已上线", self.robot.name)
@@ -2613,6 +2620,13 @@ class MyClient(botpy.Client):
             self._notice_task = asyncio.create_task(
                 notices.poll_loop(self.api, store, push_store)
             )
+        # R6 段位表预热（后台线程，不挡上线）：不预热的话，第一个来查 R6 的人
+        # 要额外等 2-3 秒去拉 /ranks（每个进程只拉一次）。
+        if self._r6_warm_task is None or self._r6_warm_task.done():
+            if r6stats.enabled():
+                self._r6_warm_task = asyncio.create_task(
+                    asyncio.to_thread(r6stats.warm_up)
+                )
 
     # 群里被 @ 时触发
     async def on_group_at_message_create(self, message: GroupMessage):
