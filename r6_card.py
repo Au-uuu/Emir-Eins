@@ -22,16 +22,16 @@ UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) qqbot-r6/1.0"}
 
 W = 1000
 PAD = 30
-BG = (15, 17, 23, 255)
-PANEL = (25, 28, 36, 255)
-PANEL_HI = (34, 38, 48, 255)
-FG = (238, 240, 245, 255)
-SUB = (156, 162, 176, 255)
-DIM = (108, 114, 128, 255)
-ACCENT = (242, 169, 59, 255)
-GREEN = (92, 200, 126, 255)
-RED = (232, 96, 96, 255)
-CHIP_BG = (242, 169, 59, 46)
+BG = (11, 13, 17, 255)
+PANEL = (20, 23, 28, 255)
+PANEL_HI = (28, 32, 39, 255)
+BORDER = (37, 41, 48, 255)
+FG = (240, 242, 246, 255)
+SUB = (150, 156, 167, 255)
+DIM = (99, 105, 116, 255)
+ACCENT = (223, 163, 73, 255)
+GREEN = (94, 198, 126, 255)
+RED = (230, 98, 98, 255)
 
 _CACHE: dict[str, bytes] = {}   # 头像/段位图标的内存缓存（URL -> 原始字节）
 _FONTS: dict[int, object] = {}  # 字号 -> 字体（_load_cjk_font 每次重读文件，必须缓存）
@@ -95,7 +95,8 @@ def _tiles(d, y: int, x0: int, x1: int, items: list, h: int = 92) -> int:
     tw = (x1 - x0 - gap * (n - 1)) // n
     for i, (label, value, color) in enumerate(items):
         tx = x0 + i * (tw + gap)
-        d.rounded_rectangle((tx, y, tx + tw, y + h), radius=12, fill=PANEL_HI)
+        d.rounded_rectangle((tx, y, tx + tw, y + h), radius=12, fill=PANEL_HI,
+                            outline=BORDER, width=1)
         d.text((tx + 16, y + 14), label, font=_font(20), fill=DIM)
         d.text((tx + 16, y + 44), value, font=_font(32), fill=color)
     return y + h
@@ -129,11 +130,18 @@ def _chart(canvas, d, x0: int, y0: int, w: int, h: int, series: list) -> int:
 
     poly = [(px(dt), py(v)) for dt, v in pts]
 
-    overlay = Image.new("RGBA", (w + 2, h + 2), (0, 0, 0, 0))
-    ImageDraw.Draw(overlay).polygon(
-        [(x, y) for x, y in poly] + [(w, h), (0, h)], fill=(242, 169, 59, 52)
+    from PIL import ImageChops
+
+    fill = Image.new("RGBA", (w + 2, h + 2), (0, 0, 0, 0))
+    ImageDraw.Draw(fill).polygon(
+        [(x, y) for x, y in poly] + [(w, h), (0, h)], fill=ACCENT
     )
-    canvas.alpha_composite(overlay, (x0, y0))
+    grad = Image.linear_gradient("L").resize((1, h + 2)).point(
+        lambda v: 132 - int(v * 132 / 255)
+    )
+    ga = fill.split()[3]
+    fill.putalpha(ImageChops.multiply(ga, grad.resize((w + 2, h + 2))))
+    canvas.alpha_composite(fill, (x0, y0))
 
     d.line([(x0 + x, y0 + y) for x, y in poly], fill=ACCENT, width=4, joint="curve")
     ex, ey = x0 + poly[-1][0], y0 + poly[-1][1]
@@ -165,7 +173,8 @@ def _render(q: dict) -> bytes:
 
     # ================= 头部面板 =================
     hp = 176
-    d.rounded_rectangle((PAD, y, W - PAD, y + hp), radius=18, fill=PANEL)
+    d.rounded_rectangle((PAD, y, W - PAD, y + hp), radius=18, fill=PANEL,
+                        outline=BORDER, width=1)
     av = _fetch(q.get("avatar"))
     asz = 132
     ax, ay = PAD + 22, y + 22
@@ -176,28 +185,31 @@ def _render(q: dict) -> bytes:
 
     tx = ax + asz + 24
     d.text((tx, ay + 2), q["name"], font=_font(40), fill=FG)
-    # 平台色块 + 等级 + 时长（与色块垂直居中）
-    cw = int(d.textlength(q["platform_label"], font=_font(20))) + 22
-    d.rounded_rectangle((tx, ay + 56, tx + cw, ay + 84), radius=8, fill=(242, 169, 59, 240))
-    d.text((tx + 11, ay + 60), q["platform_label"], font=_font(20), fill=(24, 27, 34))
+    # 平台色块（文字在色块内精确居中）+ 等级 + 时长
+    lab, f20 = q["platform_label"], _font(20)
+    l, t, r, b = d.textbbox((0, 0), lab, font=f20)
+    cw, ch = (r - l) + 26, (b - t) + 14
+    cx, cy = tx, ay + 56
+    d.rounded_rectangle((cx, cy, cx + cw, cy + ch), radius=8, fill=ACCENT)
+    d.text((cx + 13 - l, cy + 7 - t), lab, font=f20, fill=(17, 19, 23))
     meta = []
     if q.get("level"):
         meta.append(f"等级 {q['level']}")
     if q.get("total_hours"):
         meta.append(f"总时长 {int(q['total_hours'])}h")
-    d.text((tx + cw + 14, ay + 60), "　".join(meta), font=_font(20), fill=SUB)
+    d.text((cx + cw + 14, cy + 7 - t), "　".join(meta), font=f20, fill=SUB)
     peak = q.get("peak")
     if peak:
         pk = f"历史最高　{peak.get('code') or '—'}　{peak.get('rank') or '—'}"
         if peak.get("rp") is not None:
             pk += f"　{int(peak['rp'])} RP"
-        d.text((tx, ay + 96), pk, font=_font(21), fill=DIM)
+        d.text((tx, ay + 98), pk, font=_font(21), fill=DIM)
     y += hp + 16
 
     # ================= 本赛季面板 =================
     s = q.get("season") or {}
     ph = 42 + 74 + 92 + 26
-    d.rounded_rectangle((PAD, y, W - PAD, y + ph), radius=18, fill=PANEL)
+    d.rounded_rectangle((PAD, y, W - PAD, y + ph), radius=18, fill=PANEL, outline=BORDER, width=1)
     y += 20
     season_right = f"{s.get('code', '')}　{s.get('name', '')}".strip() or None
     y = _section(d, y, "本赛季", season_right)
@@ -235,7 +247,7 @@ def _render(q: dict) -> bytes:
     hist = [x for x in (q.get("seasons") or []) if x.get("matches")][:4]
     if hist:
         ph = 20 + 42 + len(hist) * 40 + 18
-        d.rounded_rectangle((PAD, y, W - PAD, y + ph), radius=18, fill=PANEL)
+        d.rounded_rectangle((PAD, y, W - PAD, y + ph), radius=18, fill=PANEL, outline=BORDER, width=1)
         y += 20
         y = _section(d, y, "近几季")
         for x in hist:
@@ -256,7 +268,7 @@ def _render(q: dict) -> bytes:
     # ================= RP 走势面板 =================
     if len(q.get("rp_history") or []) >= 2:
         ph = 20 + 42 + 168 + 42 + 10
-        d.rounded_rectangle((PAD, y, W - PAD, y + ph), radius=18, fill=PANEL)
+        d.rounded_rectangle((PAD, y, W - PAD, y + ph), radius=18, fill=PANEL, outline=BORDER, width=1)
         y += 20
         y = _section(d, y, "近一月 RP 走势")
         y = _chart(canvas, d, PAD + 44, y, W - PAD * 2 - 68, 168, q["rp_history"])
@@ -268,7 +280,7 @@ def _render(q: dict) -> bytes:
     if ops:
         rows = (len(ops) + 2) // 3
         ph = 20 + 42 + rows * 76 + 8
-        d.rounded_rectangle((PAD, y, W - PAD, y + ph), radius=18, fill=PANEL)
+        d.rounded_rectangle((PAD, y, W - PAD, y + ph), radius=18, fill=PANEL, outline=BORDER, width=1)
         y += 20
         y = _section(d, y, "常用干员")
         col_w = (W - PAD * 2 - 48) // 3
