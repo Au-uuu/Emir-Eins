@@ -390,16 +390,21 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
-TN_PLATFORM = {"uplay": "pc", "psn": "psn", "xbl": "xbox"}
+TN_PLATFORM = {"uplay": "ubi", "psn": "psn", "xbl": "xbl"}
 
 
 def site_urls(platform: str, name: str, profile_id: str | None = None) -> list[str]:
-    """R6Tracker / stats.cc 的个人主页链接（看每场对局等更多历史用）。"""
+    """R6Tracker / stats.cc 的个人主页链接（看每场对局等更多历史用）。
+
+    R6Tracker 的实际格式是 `r6.tracker.network/r6siege/profile/<平台>/<昵称>/overview`
+    （平台 slug：ubi / psn / xbl —— 注意 PC 是 **ubi** 不是 pc，踩过坑）。
+    名字大小写不敏感，用接口给的规范昵称最好。
+    """
     from urllib.parse import quote
 
-    tn = TN_PLATFORM.get(platform or "", "pc")
+    tn = TN_PLATFORM.get(platform or "", "ubi")
     n = quote(name or "")
-    out = [f"R6Tracker　https://r6.tracker.network/profile/{tn}/{n}"]
+    out = [f"R6Tracker　https://r6.tracker.network/r6siege/profile/{tn}/{n}/overview"]
     if profile_id:
         out.append(f"stats.cc　　https://stats.cc/siege/{n}/{quote(profile_id)}")
     return out

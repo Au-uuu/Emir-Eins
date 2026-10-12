@@ -125,10 +125,14 @@ check("平台中文标签 pc→PC / ps→PlayStation",
       r6stats.platform_label("uplay") == "PC" and r6stats.platform_label("psn") == "PlayStation")
 
 urls = r6stats.site_urls("uplay", "MacieJay", "pid-test")
-check("R6Tracker 链接", any("r6.tracker.network/profile/pc/MacieJay" in u for u in urls), str(urls))
+check("R6Tracker 链接（/r6siege/profile/ubi/<名字>/overview）",
+      any("r6.tracker.network/r6siege/profile/ubi/MacieJay/overview" in u for u in urls), str(urls))
 check("stats.cc 链接", any("stats.cc/siege/MacieJay/pid-test" in u for u in urls), str(urls))
-check("xbl → xbox 平台映射",
-      any("/profile/xbox/X" in u for u in r6stats.site_urls("xbl", "X", None)))
+check("xbl → xbl 平台映射",
+      any("/r6siege/profile/xbl/X/overview" in u for u in r6stats.site_urls("xbl", "X", None)),
+      str(r6stats.site_urls("xbl", "X", None)))
+check("psn → psn 平台映射",
+      any("/r6siege/profile/psn/X/overview" in u for u in r6stats.site_urls("psn", "X", None)))
 check("无 profile_id 时只给 R6Tracker", len(r6stats.site_urls("uplay", "X", None)) == 1)
 check("解析等级/总时长", q and q["level"] == 3512 and q["total_hours"] == 5706)
 check("本赛季取最新（Y11S3）", q and q["season"]["code"] == "Y11S3")
