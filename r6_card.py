@@ -22,16 +22,16 @@ UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) qqbot-r6/1.0"}
 
 W = 1000
 PAD = 30
-BG = (6, 7, 10, 255)
-PANEL = (16, 19, 24, 255)
-PANEL_HI = (23, 27, 33, 255)
-BORDER = (32, 36, 43, 255)
-FG = (240, 242, 246, 255)
-SUB = (150, 156, 167, 255)
-DIM = (99, 105, 116, 255)
+BG = (32, 32, 32, 255)
+PANEL = (34, 34, 34, 255)
+PANEL_HI = (44, 44, 45, 255)
+BORDER = (58, 58, 60, 255)
+FG = (238, 238, 240, 255)
+SUB = (168, 170, 174, 255)
+DIM = (124, 126, 132, 255)
 ACCENT = (223, 163, 73, 255)
-GREEN = (94, 198, 126, 255)
-RED = (230, 98, 98, 255)
+GREEN = (110, 200, 134, 255)
+RED = (232, 104, 104, 255)
 
 _CACHE: dict[str, bytes] = {}   # 头像/段位图标的内存缓存（URL -> 原始字节）
 _FONTS: dict[int, object] = {}  # 字号 -> 字体（_load_cjk_font 每次重读文件，必须缓存）
@@ -81,11 +81,17 @@ def _rounded(img: Image.Image, size: int, radius: int) -> Image.Image:
 
 
 def _section(d, y: int, title: str, right: str | None = None) -> int:
-    d.rectangle((PAD + 22, y + 5, PAD + 27, y + 27), fill=ACCENT)
-    d.text((PAD + 40, y), title, font=_font(25), fill=FG)
+    """小节标题：橙色竖条与标题文字**垂直居中对齐**；右侧文字也与标题居中。"""
+    ft, fr = _font(25), _font(21)
+    _, t, _, b = d.textbbox((0, 0), title, font=ft)
+    cy = y + (t + b) / 2
+    bar_h = 22
+    d.rectangle((PAD + 24, cy - bar_h / 2, PAD + 29, cy + bar_h / 2), fill=ACCENT)
+    d.text((PAD + 42, y), title, font=ft, fill=FG)
     if right:
-        w = d.textlength(right, font=_font(21))
-        d.text((W - PAD - 24 - w, y + 5), right, font=_font(21), fill=DIM)
+        _, rt, _, rb = d.textbbox((0, 0), right, font=fr)
+        d.text((W - PAD - 24 - d.textlength(right, font=fr), cy - (rt + rb) / 2),
+               right, font=fr, fill=DIM)
     return y + 42
 
 
@@ -177,7 +183,7 @@ def _render(q: dict) -> bytes:
                         outline=BORDER, width=1)
     av = _fetch(q.get("avatar"))
     asz = 132
-    ax, ay = PAD + 22, y + 22
+    ax, ay = PAD + 24, y + 22
     if av is not None:
         canvas.alpha_composite(_rounded(av, asz, 16), (ax, ay))
     else:
@@ -215,12 +221,18 @@ def _render(q: dict) -> bytes:
         d.rounded_rectangle((bx, by, bx + bsz, by + bsz), radius=12,
                             fill=PANEL_HI, outline=BORDER, width=1)
     rname = q.get("rank") or "未定级"
-    d.text((bx - 22 - d.textlength(rname, font=_font(28)), ay + 30), rname,
-           font=_font(28), fill=ACCENT)
-    if q.get("rp") is not None:
-        rp = f"{int(q['rp'])} RP"
-        d.text((bx - 22 - d.textlength(rp, font=_font(24)), ay + 72), rp,
-               font=_font(24), fill=SUB)
+    rp_txt = f"{int(q['rp'])} RP" if q.get("rp") is not None else ""
+    f_rn, f_rp = _font(28), _font(24)
+    _, tn, _, bn = d.textbbox((0, 0), rname, font=f_rn)
+    _, tp, _, bp = d.textbbox((0, 0), rp_txt, font=f_rp) if rp_txt else (0, 0, 0, 0)
+    gap = 8
+    block_h = (bn - tn) + (gap + (bp - tp) if rp_txt else 0)
+    top = (by + bsz / 2) - block_h / 2          # 与徽章垂直居中
+    d.text((bx - 22 - d.textlength(rname, font=f_rn), top - tn), rname,
+           font=f_rn, fill=ACCENT)
+    if rp_txt:
+        d.text((bx - 22 - d.textlength(rp_txt, font=f_rp), top + (bn - tn) + gap - tp),
+               rp_txt, font=f_rp, fill=SUB)
     y += hp + 16
 
     # ================= 本赛季面板 =================
@@ -301,7 +313,7 @@ def _render(q: dict) -> bytes:
         y += 20
     y += 10
 
-    d.text((PAD + 4, y), "数据：R6 Arenyze", font=_font(20), fill=DIM)
+    d.text((PAD + 24, y), "数据：R6 Arenyze", font=_font(20), fill=DIM)
     y += 36
 
     canvas = canvas.crop((0, 0, W, min(y, canvas.height))).convert("RGB")
