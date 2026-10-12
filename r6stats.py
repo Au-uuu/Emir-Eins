@@ -25,6 +25,10 @@ import urllib.request
 log = logging.getLogger("qqbot.r6stats")
 
 BASE = "https://public-api.arenyze.com/r6/api"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 段位表（/ranks）基本不变，落一份磁盘缓存：429 或临时故障时不至于让所有段位名变空
+_RANKS_FILE = os.path.join(BASE_DIR, "data", "r6_ranks.json")
+_RANKS_TTL = 7 * 24 * 3600.0
 DEFAULT_PLATFORM = "uplay"
 TOP_OPERATORS = 3   # 文字版展示的干员数
 CARD_OPERATORS = 6  # 图片卡片展示的干员数
@@ -114,15 +118,40 @@ def _num(v):
         return None
 
 
+def _load_ranks() -> list:
+    """取段位表：**先吃磁盘缓存**（7 天），再联网。
+
+    踩过：段位表原来只在内存里，一旦 /ranks 被限流（HTTP 429）段位名全变 None。
+    表本身几个月才动一次，落盘很划算。
+    """
+    try:
+        with open(_RANKS_FILE, encoding="utf-8") as f:
+            disk = json.load(f)
+        rows = disk.get("rows") or []
+        if rows and time.time() - (disk.get("at") or 0) < _RANKS_TTL:
+            log.info("[R6] 段位表用磁盘缓存（%d 行）", len(rows))
+            return rows
+    except (OSError, ValueError):
+        pass
+    try:
+        rows = _get("/ranks", version="v7")
+    except Exception as exc:  # noqa: BLE001
+        log.info("[R6] 段位表获取失败：%s", exc)
+        return []
+    try:
+        os.makedirs(os.path.dirname(_RANKS_FILE), exist_ok=True)
+        with open(_RANKS_FILE, "w", encoding="utf-8") as f:
+            json.dump({"at": time.time(), "rows": rows}, f, ensure_ascii=False)
+    except OSError as exc:
+        log.info("[R6] 段位表落盘失败：%s", exc)
+    return rows
+
+
 def rank_name(rp) -> str | None:
-    """按 RP 映射段位名（华北 v7 段位表）。"""
+    """按 RP 映射段位名（Arenyze v7 段位表）。"""
     global _ranks_cache
     if _ranks_cache is None:
-        try:
-            _ranks_cache = _get("/ranks", version="v7")
-        except Exception as exc:  # noqa: BLE001
-            log.info("[R6] 段位表获取失败：%s", exc)
-            _ranks_cache = []
+        _ranks_cache = _load_ranks()
     rp = _num(rp)
     if rp is None:
         return None
@@ -170,10 +199,13 @@ def _season_of(seg: dict) -> dict:
         denom = wins + losses if losses is not None and wins + losses > 0 else matches
         if denom:
             wr = wins / denom * 100.0
-    # 有些赛季接口只给了「赛季最高 RP」没给当前 RP（实测 Y11S2 就是），
-    # 这时段位和展示用的 RP 都取最高值——否则「近几季」会显示成一排「—」。
+    # 赛季展示的 RP/段位用「赛季最高 RP」（maxRankPoints），这与 Arenyze 网站前端
+    # 完全一致——它自己的代码就是 `maxRankPoints || rankPoints`，标题叫 "Peak rank"；
+    # 也与 R6Tracker 的 MAX 列逐一对得上（XII-FuHua：2,616 / 2,699 / 2,838）。
+    # ⚠️ 别优先 rankPoints：那个值既不是 TN 的 MAX 也不是它的 FINAL（像个中间快照，
+    # 实测 2,387 / 2,368 / 2,648，两列都对不上）。
     # RP=1000 是定位赛基准，不算段位。
-    shown = rp if rp else max_rp
+    shown = max_rp or rp
     rank_txt = _zh_rank(rank_name(shown)) if (shown and shown > 1000) else None
     return {
         "code": meta.get("shortName") or meta.get("name") or "",

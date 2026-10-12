@@ -98,6 +98,9 @@ def boom_get(path, **params):
 
 
 _REAL_GET = r6stats._get          # 打桩前留一份真身，后面测 HTTP 分类要用
+# 段位表落盘路径指向临时目录，别污染仓库 data/
+import tempfile  # noqa: E402
+r6stats._RANKS_FILE = os.path.join(tempfile.mkdtemp(), "ranks.json")
 r6stats._get = fake_get
 r6stats._cache.clear()
 r6stats._ranks_cache = None
@@ -111,6 +114,18 @@ check("段位映射 4347→Diamond 2", r6stats.rank_name(4347) == "Diamond 2")
 check("段位映射 0→Unranked", r6stats.rank_name(0) == "Unranked")
 check("段位中文化 Diamond 3→钻石 3", r6stats._zh_rank("Diamond 3") == "钻石 3")
 check("段位中文化 Legend Division→传奇", r6stats._zh_rank("Legend Division") == "传奇")
+
+# 段位表落盘后，即使 /ranks 被限流（429）也要还能出段位名
+def _ranks_429(path, **kw):
+    raise r6stats.R6Unavailable("HTTP 429")
+
+
+r6stats._ranks_cache = None
+r6stats._get = _ranks_429
+check("429 时用磁盘里的段位表（否则段位名会整片变空）",
+      r6stats.rank_name(4347) == "Diamond 2")
+r6stats._get = fake_get
+r6stats._ranks_cache = None
 
 os.environ.pop("QQ_BOT_R6_KEY", None)
 check("未配置 key → query 返回 None", r6stats.query("uplay", "MacieJay") is None)
@@ -154,6 +169,10 @@ check("赛季只给最高 RP 时也能给出段位（否则近几季一排「—
 check("RP=1000（定位赛基准）不算段位",
       r6stats._season_of({"stats": {"maxRankPoints": {"value": 1000}},
                           "attributes": {}})["rank"] is None)
+_pref = r6stats._season_of(
+    {"stats": {"rankPoints": {"value": 2387}, "maxRankPoints": {"value": 4347}}, "attributes": {}})
+check("rankPoints 与 maxRankPoints 都有时取最高（与网站/TN MAX 一致）",
+      _pref["rp_show"] == 4347 and _pref["rank"] == "钻石 2", str(_pref["rp_show"]))
 check("本赛季取最新（Y11S3）", q and q["season"]["code"] == "Y11S3")
 check("本赛季胜负/胜率（分母用 胜+负，与 TN 一致）",
       q and q["season"]["wins"] == 112 and q["season"]["losses"] == 107
