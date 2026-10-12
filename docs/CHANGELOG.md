@@ -61,6 +61,7 @@
 | 2026-10-10 | 知识库采集修复：resolve 改用「限定标题+links」（碧蓝航线 22→418）；模型池/--works/额度观测；扩面魔裁+大肥鱼 | [kb-build-fixes](changes/2026-10-10-kb-build-fixes.md) |
 | 2026-10-11 | 知识库纳入坚果云异地备份（`deploy/backup-nutstore.sh` 增 `kb/`） | [kb-backup](changes/2026-10-11-kb-backup.md) |
 | 2026-10-12 | R6 战绩查询：`/r6 [平台] 昵称`，走 R6 Arenyze 公开 API（段位/RP/本赛季/近几季/常用干员） | [r6-stats](changes/2026-10-12-r6-stats.md) |
+| 2026-10-12 | 向管理员汇报（主动私聊）+ R6 key 过期提醒（可扩展的定时检查项） | [admin-notices](changes/2026-10-12-admin-notices.md) |
 
 ## 约定
 

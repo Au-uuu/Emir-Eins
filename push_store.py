@@ -47,6 +47,10 @@ CREATE TABLE IF NOT EXISTS seen_news (
     ts   REAL NOT NULL,
     PRIMARY KEY (game, cid)
 );
+CREATE TABLE IF NOT EXISTS seen_notices (
+    key TEXT NOT NULL PRIMARY KEY,
+    ts  REAL NOT NULL
+);
 """
 
 
@@ -96,6 +100,14 @@ class PushStore:
         已见、永不推送（部署重启就会踩）。
         """
         return await asyncio.to_thread(self._has_seen_sync, game)
+
+    async def unseen_notices(self, keys: list[str]) -> list[str]:
+        """从通知 key 列表里筛出还没发过的（保持原顺序）。"""
+        return await asyncio.to_thread(self._unseen_notices_sync, keys)
+
+    async def mark_notices(self, keys: list[str]) -> None:
+        """记录这些通知 key 为已发（幂等）。"""
+        await asyncio.to_thread(self._mark_notices_sync, keys)
 
     # ---------------- 同步实现 ----------------
 
@@ -164,4 +176,25 @@ class PushStore:
             conn.execute(
                 "DELETE FROM seen_news WHERE ts < ?",
                 (now - SEEN_RETENTION_DAYS * 86400,),
+            )
+
+    def _unseen_notices_sync(self, keys: list[str]) -> list[str]:
+        if not keys:
+            return []
+        with self._connect() as conn:
+            ph = ",".join("?" * len(keys))
+            rows = conn.execute(
+                f"SELECT key FROM seen_notices WHERE key IN ({ph})", tuple(keys)
+            ).fetchall()
+        seen = {r["key"] for r in rows}
+        return [k for k in keys if k not in seen]
+
+    def _mark_notices_sync(self, keys: list[str]) -> None:
+        if not keys:
+            return
+        now = time.time()
+        with self._connect() as conn:
+            conn.executemany(
+                "INSERT OR IGNORE INTO seen_notices(key, ts) VALUES (?, ?)",
+                [(k, now) for k in keys],
             )

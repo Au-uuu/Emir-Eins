@@ -28,6 +28,7 @@ import ark_news
 import help_image
 import kb
 import names
+import notices
 import persona
 import r6stats
 import sensitive
@@ -2375,6 +2376,7 @@ class MyClient(botpy.Client):
         super().__init__(*args, **kwargs)
         self._watchdog_task: asyncio.Task | None = None
         self._news_task: asyncio.Task | None = None
+        self._notice_task: asyncio.Task | None = None
 
     async def on_ready(self):
         log.info("机器人「%s」已上线", self.robot.name)
@@ -2390,6 +2392,11 @@ class MyClient(botpy.Client):
         if self._news_task is None or self._news_task.done():
             self._news_task = asyncio.create_task(
                 ark_news.poll_loop(self.api, push_store)
+            )
+        # 管理员汇报（key 过期等需人处理的事）：同理，事件循环已运行才 create_task。
+        if self._notice_task is None or self._notice_task.done():
+            self._notice_task = asyncio.create_task(
+                notices.poll_loop(self.api, store, push_store)
             )
 
     # 群里被 @ 时触发
