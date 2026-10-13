@@ -27,6 +27,7 @@ def reset() -> None:
     kb._df = {}
     kb._n = 0
     kb._avgdl = 0.0
+    kb._names_by_work = {}
 
 
 d = tempfile.mkdtemp()
@@ -66,6 +67,46 @@ reset()
 os.environ["QQ_BOT_KB_MIN_SCORE"] = "0.1"
 os.environ["QQ_BOT_KB_DIR"] = os.path.join(tempfile.gettempdir(), "no_such_kb_dir")
 check("目录不存在 → 空结果", kb.context("佩丽卡") == "")
+
+# ---------------- 「必须提到作品/角色名」门槛（带 ## 标题的语料）----------------
+d2 = tempfile.mkdtemp()
+with open(os.path.join(d2, "崩坏星穹铁道.md"), "w", encoding="utf-8") as fh:
+    fh.write(
+        "## 崩坏：星穹铁道（作品/世界观）\n"
+        "玩家扮演「开拓者」，与同伴乘坐「星穹列车」穿越银河。\n\n"
+        "## 开拓者\n"
+        "开拓者是星穹列车乘员，传递「开拓」意志。\n"
+    )
+with open(os.path.join(d2, "蔚蓝档案.md"), "w", encoding="utf-8") as fh:
+    fh.write("## 满月\n满月是「四运势神」之一，由满月下的寂静月影所化。\n")
+# 单字词条名（线上真实存在的坑：《鸣潮》有个「角」）
+with open(os.path.join(d2, "鸣潮.md"), "w", encoding="utf-8") as fh:
+    fh.write("## 角\n角是《鸣潮》的登场角色，善于用风。\n")
+
+reset()
+os.environ["QQ_BOT_KB_DIR"] = d2
+env = kb.search("今日运势")            # 只命中词形，没提任何作品/角色
+check("日常泛词「今日运势」不触发检索（挡的就是这条）", not env, str(env[:1]))
+
+hits = kb.search("星穹铁道有哪些角色")
+check("提到作品名 → 正常检索", bool(hits) and "星穹列车" in hits[0][1], str(hits[:1]))
+
+hits = kb.search("开拓者是谁")
+check("提到角色名 → 正常检索", bool(hits) and "开拓者" in hits[0][1], str(hits[:1]))
+
+check("兼作日常词的词条名（满月）单独出现不触发",
+      not kb.search("今晚满月真好看"), "")
+
+hits = kb.search("蔚蓝档案的满月")
+check("但同时提到作品名 → 放行", bool(hits) and "满月" in hits[0][1], str(hits[:1]))
+
+hits = kb.search("星穹铁道")
+check("跨作品不串味（问星穹铁道不会带回蔚蓝档案）",
+      bool(hits) and all("满月" not in t for _, t, _ in hits), str(hits[:1]))
+
+check("日常句子不触发：单字词条名（鸣潮的「角」）不该被「角色」包含",
+      not kb.search("这图里的角色是谁"), "")
+check("只提单字词条名不触发（太短，不作为门槛）", not kb.search("这片区域的角"))
 
 print(f"\n{'=' * 50}")
 print(f"失败 {failures} 项")

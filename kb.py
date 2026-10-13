@@ -47,6 +47,22 @@ _MAX_CHUNK = 800  # 单段最大字数，过长再切
 
 _ASCII_RE = re.compile(r"[a-z0-9]+")
 _CJK_RUN_RE = re.compile(r"[\u4e00-\u9fff]+")
+_HEADING_RE = re.compile(r"^#{2,}\s*(.+)$", re.M)
+# 匹配名字时要去掉的标点/空白（「：」「·」这类会出现在名字里）
+_PUNCT_RE = re.compile(r"[\s：:·・,，。.！!？?「」『』（）()【】\[\]《》<>—\-~/]")
+
+# 既是词条名、又是日常词：**单独出现时不许触发检索**，只有同时提到作品名才认。
+# 名单故意保持很短——只有确实会误伤的才放进来（"满月"实测误伤过一次：
+# 用户说「今日运势」时它被拽进来）。像"流萤"这种虽然也是常见词，但用户更可能
+# 是在问那个角色，所以不放进来；以后发现误伤再往里加。
+_GENERIC_NAMES = {
+    # 兼作日常词的词条名（"满月"实测误伤过一次：用户说「今日运势」时它被拽进来）
+    "满月", "月亮", "星星", "天气", "运势", "运气",
+    # 章节名/泛称，不是实体名，不该用来触发检索
+    "角色", "设定", "世界观", "作品", "游戏", "介绍", "简介", "概述",
+    "一览", "列表", "说明", "玩法", "剧情", "背景", "技能", "面板",
+    "档案", "语音", "皮肤", "干员", "地图", "武器", "道具", "系统",
+}
 
 _lock = threading.Lock()
 _loaded = False
@@ -54,6 +70,8 @@ _chunks: list[dict] = []
 _df: dict[str, int] = {}
 _avgdl = 0.0
 _n = 0
+# 作品 → (作品名集合, 词条名集合)。为空表示这份语料没有标题结构，就不做「必须提到」门槛。
+_names_by_work: dict[str, tuple[set[str], set[str]]] = {}
 
 
 def _env_int(name: str, default: int) -> int:
@@ -80,6 +98,38 @@ def topk() -> int:
 
 def min_score() -> float:
     return _env_float("QQ_BOT_KB_MIN_SCORE", 1.5)
+
+
+def _normalize(text: str) -> str:
+    """去掉标点/空白并小写，便于做包含匹配（名字里常有「：」「·」）。"""
+    return _PUNCT_RE.sub("", (text or "").lower())
+
+
+def _works_mentioned(query: str) -> set[str] | None:
+    """query 提到了哪些作品/词条；None 表示不做门槛（语料无标题结构）。
+
+    这是为了挡住「今日运势」这类**日常泛词**：BM25 只看词形，会把《蔚蓝档案》的
+    「满月（四运势神）」、《崩坏星穹铁道》的「开拓者（星穹列车乘员）」整段塞给
+    模型，模型顺着编出跟话题无关的游戏设定（实测过一次）。
+    规则：只要 query 里出现了作品名，或某个词条名（`_GENERIC_NAMES` 里那些兼作
+    日常词的除外），才认为用户真的在问知识库里的东西。
+    """
+    if not _names_by_work:
+        return None
+    q = _normalize(query)
+    if not q:
+        return set()
+    q_toks = [t for t in _tokenize(q) if len(t) >= 2]
+    hit: set[str] = set()
+    for work, (titles, entries) in _names_by_work.items():
+        # 作品名：允许「部分提及」——用户常说"星穹铁道"而不是全名"崩坏星穹铁道"
+        if any(n and (n in q or any(t in n for t in q_toks)) for n in titles):
+            hit.add(work)
+            continue
+        # 词条名：必须在句子里**整段出现**（否则"角色""设定"这类泛词会误触发）
+        if any(n and n not in _GENERIC_NAMES and n in q for n in entries):
+            hit.add(work)
+    return hit
 
 
 def _tokenize(text: str) -> list[str]:
@@ -130,6 +180,7 @@ def _load() -> None:
             return
         df: dict[str, int] = {}
         chunks: list[dict] = []
+        names_by_work: dict[str, tuple[set[str], set[str]]] = {}
         for path in files:
             try:
                 with open(path, encoding="utf-8") as fh:
@@ -137,6 +188,11 @@ def _load() -> None:
             except OSError as exc:
                 log.warning("读取知识库文件失败：%s（%s）", path, exc)
                 continue
+            work = os.path.splitext(os.path.basename(path))[0]
+            titles: set[str] = set()
+            if len(work.strip()) >= 2:      # 文件名也要求 2 字以上（同词条名的理由）
+                titles.add(_normalize(work))
+            entries: set[str] = set()
             for i, chunk in enumerate(_split_chunks(text)):
                 toks = _tokenize(chunk)
                 if not toks:
@@ -144,16 +200,29 @@ def _load() -> None:
                 tf: dict[str, int] = {}
                 for t in toks:
                     tf[t] = tf.get(t, 0) + 1
+                # 段落开头的 `## XXX` 是词条名；「（作品/世界观）」那条算作品名
+                m = _HEADING_RE.match(chunk)
+                raw = m.group(1).splitlines()[0].strip() if m else ""
+                short = raw.split("（")[0].split("(")[0].strip()
+                # ⚠️ 只收 2 个字以上的名字：单字词条（鸣潮有个「角」）会被
+                # 「角色」这类常见词包含，导致门槛形同虚设（踩过）
+                if len(short) >= 2:
+                    if "作品" in raw or "世界观" in raw:
+                        titles.add(_normalize(short))
+                    else:
+                        entries.add(_normalize(short))
                 chunks.append(
                     {
                         "text": chunk,
                         "source": f"{os.path.basename(path)}#{i + 1}",
                         "tf": tf,
                         "len": len(toks),
+                        "work": work,
                     }
                 )
                 for t in tf:
                     df[t] = df.get(t, 0) + 1
+            names_by_work[work] = (titles, entries)
         if not chunks:
             log.info("知识库没有可用内容（%s），RAG 跳过", directory)
             return
@@ -161,7 +230,12 @@ def _load() -> None:
         _df = df
         _n = len(chunks)
         _avgdl = sum(c["len"] for c in chunks) / _n
-        log.info("知识库已加载：%d 段（%s）", _n, directory)
+        # 只有语料真的带 `## 标题` 结构时才启用「必须提到」门槛；否则维持旧行为
+        _names_by_work.clear()
+        if any(e for _, e in names_by_work.values()):
+            _names_by_work.update(names_by_work)
+        log.info("知识库已加载：%d 段（%s，门槛%s）", _n, directory,
+                 "开" if _names_by_work else "关")
 
 
 def _bm25(query_tokens: list[str], chunk: dict) -> float:
@@ -180,14 +254,26 @@ def _bm25(query_tokens: list[str], chunk: dict) -> float:
 
 
 def search(query: str, limit: int | None = None) -> list[tuple[float, str, str]]:
-    """返回 [(分数, 文本, 来源)]，按分数降序，已过滤低于阈值者。"""
+    """返回 [(分数, 文本, 来源)]，按分数降序，已过滤低于阈值者。
+
+    先过「必须提到作品/角色名」的门槛（见 `_works_mentioned`）：日常泛词
+    （运势、运气、天气…）不再把无关游戏设定拽进来；提到某作品时也只在
+    该作品的词条里检索，避免跨作品串味。
+    """
     _load()
     if not _chunks:
+        return []
+    allowed = _works_mentioned(query)
+    if allowed is not None and not allowed:
+        log.info("[知识库] 未提到已知作品/角色，跳过检索（query=%.20s）", query)
         return []
     qtoks = _tokenize(query)
     if not qtoks:
         return []
-    scored = [(_bm25(qtoks, c), c) for c in _chunks]
+    pool = _chunks if allowed is None else [c for c in _chunks if c.get("work") in allowed]
+    if not pool:
+        return []
+    scored = [(_bm25(qtoks, c), c) for c in pool]
     scored.sort(key=lambda x: x[0], reverse=True)
     floor = min_score()
     out = []
