@@ -376,11 +376,12 @@ def help_topic(name: str) -> str | None:
 # /echo 可复读的最大字数，防止超长消息触发平台长度限制
 ECHO_MAX_LEN = 200
 
-# 匹配复读指令（大小写不敏感），捕获后面的内容。
-# 英文 /echo 与中文 /复读 都认——管理端「指令面板」里配的中文名点一下会插入
-# /复读，得让它和 /echo 等价，否则用户从面板点进来机器人会装死。
-ECHO_RE = re.compile(r"^/?echo\b\s*(.*)$", re.IGNORECASE | re.DOTALL)
-ECHO_CN_RE = re.compile(r"^/?复读\s*(.*)$", re.DOTALL)
+# 复读指令：**必须带斜杠**（`/复读`、`/echo`）。
+# 之前斜杠是可选的，结果群友随口一句"复读 xxx"机器人就学舌；现在裸词按普通聊天走。
+# 英文 /echo 与中文 /复读 都认——管理端「指令面板」里配的中文名点一下插入 /复读，
+# 得让它和 /echo 等价，否则用户从面板点进来机器人会装死。
+ECHO_RE = re.compile(r"^/echo\b\s*(.*)$", re.IGNORECASE | re.DOTALL)
+ECHO_CN_RE = re.compile(r"^/复读\s*(.*)$", re.DOTALL)
 
 # 图片指令：斜杠可有可无，`添加` / `/添加`、`来只` / `/来只` 都认
 ADD_RE = re.compile(r"^/?添加(?:图片|图)?\s*(.*)$", re.DOTALL)

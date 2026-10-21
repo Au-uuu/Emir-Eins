@@ -277,6 +277,19 @@ async def main() -> int:
     check("带「/」的 /图库 正常", await bot.handle_command(
         ok, FakeApi(), "group", "G_TEST", "/图库") is True)
 
+    print("\n[10] 复读必须带斜杠（裸词不再学舌）")
+    for bare in ("复读 你好", "echo 你好", "复读", "echo"):
+        em = FakeMessage(bare)
+        handled = await bot.handle_command(em, FakeApi(), "group", "G_TEST", bare)
+        check(f"裸「{bare}」不触发", handled is False and em.replies == [],
+              f"handled={handled} replies={em.replies}")
+    em = FakeMessage("/复读 你好")
+    await bot.handle_command(em, FakeApi(), "group", "G_TEST", "/复读 你好")
+    check("/复读 正常复读", em.text_replies == ["你好"], str(em.text_replies))
+    em = FakeMessage("/echo hi")
+    await bot.handle_command(em, FakeApi(), "group", "G_TEST", "/echo hi")
+    check("/echo 仍是别名（也必须带斜杠）", em.text_replies == ["hi"], str(em.text_replies))
+
     print(f"\n失败 {failures} 项")
     return 1 if failures else 0
 
