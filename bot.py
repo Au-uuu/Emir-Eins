@@ -25,6 +25,7 @@ from botpy.message import C2CMessage, GroupMessage
 from dotenv import load_dotenv
 
 import ark_news
+import fortune
 import help_image
 import kb
 import names
@@ -267,6 +268,7 @@ HELP_TEXT = (
     "【私有】/私有 图库名　设为当前群私有　/公开 图库名 取消\n"
     "【名片】/添加名片 备注　引用图片后添加游戏名片　更多用法：/help 名片\n"
     "【公告】/公告　查看本群推送开关　/公告 查 [游戏]　更多用法：/help 公告\n"
+    "【运势】/今日运势　本地黄历 + 抽签（同一人同一天固定）\n"
     "【R6】/r6 [平台] 昵称　彩虹六号战绩，别名 /彩六（平台 pc/ps/xbox，默认 pc）\n"
     "　　　/r6　绑定后直接查自己的　/r6网站　个人主页链接　更多用法：/help r6\n"
     "\n"
@@ -415,6 +417,9 @@ R6_RE = re.compile(r"^/(?:r6|彩六|彩虹六号)(?:战绩)?\s*(.*)$", re.IGNORE
 
 # 帮助：/help、/帮助、/菜单；带主题时 /help r6 查某条指令的完整用法。
 HELP_RE = re.compile(r"^/(?:help|帮助|菜单)\s*(.*)$", re.IGNORECASE | re.DOTALL)
+
+# 今日运势：/今日运势 或 /运势（必须带斜杠；裸词留给闲聊）
+FORTUNE_RE = re.compile(r"^/(?:今日)?运势\s*$", re.DOTALL)
 
 # 管理员登记指令（**只在私聊可用，且不对外展示**）：「管理员 <口令>」
 ADMIN_RE = re.compile(r"^/?管理员\s*(.*)$", re.DOTALL)
@@ -2491,6 +2496,11 @@ async def handle_command(message, api, scope: str, scene_id: str, content: str) 
 
     if cmd in ("/ping", "/在线", "在线"):
         await message.reply(content="pong 🏓")
+        return True
+
+    # /今日运势、/运势 —— 本地黄历 + 抽签（同一人同一天固定）
+    if FORTUNE_RE.match(text):
+        await message.reply(content=fortune.format_reply(author_openid(message)))
         return True
 
     if R6_RE.match(text):
