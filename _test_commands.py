@@ -168,6 +168,37 @@ async def main() -> int:
     await bot.do_add_image(m, FakeApi(), "group", "G_TEST", "/添加 测试")
     check("保持静默", len(m.text_replies) == 0, str(m.text_replies))
 
+    print("\n[6b] /添加 成功提示带「已存 N 张」")
+    url3 = write("c.png", png_bytes((50, 200, 50)))
+    att3 = types.SimpleNamespace(
+        url=url3, filename="c.png", content_type="image/png"
+    )
+    m = FakeMessage("/添加 新肥鱼", attachments=[att3])
+    await bot.do_add_image(m, FakeApi(), "group", "G_TEST", "/添加 新肥鱼")
+    body = (m.text_replies or [""])[0]
+    check("新图入库成功提示", "入库成功" in body, body)
+    check("关键词带（已存 1 张）", "新肥鱼（已存 1 张）" in body, body)
+
+    # 重复图：走「已经在库里」分支，当前关键词一行同样带数量
+    att1 = types.SimpleNamespace(
+        url=url1, filename="a.png", content_type="image/png"
+    )
+    m = FakeMessage("/添加 大肥鱼", attachments=[att1])
+    await bot.do_add_image(m, FakeApi(), "group", "G_TEST", "/添加 大肥鱼")
+    body = (m.text_replies or [""])[0]
+    check("重复图提示", "已经在库里" in body, body)
+    check("当前关键词带数量", "大肥鱼（已存 1 张）" in body, body)
+
+    # 批量添加：末尾的关键词行带数量
+    url4 = write("d.png", png_bytes((200, 200, 50)))
+    att4 = types.SimpleNamespace(
+        url=url4, filename="d.png", content_type="image/png"
+    )
+    m = FakeMessage("/批量添加 新肥鱼", attachments=[att4])
+    await bot.do_batch_add(m, FakeApi(), "group", "G_TEST", "/批量添加 新肥鱼")
+    body = (m.text_replies or [""])[0]
+    check("批量添加提示带数量", "新肥鱼（已存 2 张）" in body, body)
+
     print("\n[7] /图库 各分支")
     m = FakeMessage("/图库")
     await bot.do_gallery(m, "/图库")

@@ -279,6 +279,10 @@ HELP_TEXT = (
     "用法：长按图片选「引用」，再回复「/添加 关键词」。"
 )
 
+# 人格要能答「怎么删除图库」这类自身用法问题：把同一份 HELP_TEXT 注入系统
+# 提示词（见 persona.set_self_manual），跟 /help 永远同源、不会漂移。
+persona.set_self_manual(HELP_TEXT)
+
 # 管理员私聊里的完整帮助（包含 /查询标识、/删除图库 等管理指令）
 ADMIN_HELP_TEXT = (
     "【管理员指令】\n"
@@ -704,6 +708,39 @@ def quoted_content(message) -> str:
     return merged[:QUOTE_TEXT_CAP]
 
 
+def _warn_if_blank(data: bytes) -> None:
+    """白图哨兵：下载回来疑似全白（亮度极高且几乎无细节）时打 warning。
+
+    2026-10-23 群里集中反馈「发的图机器人看着是白的」，事后复盘下载与模型链路
+    都正常（当天应为平台临时故障、次日自愈）。当时没有留证据、说不清哪一环坏的，
+    留这个哨兵：再发生时日志直接区分「下载回来就是白的（QQ CDN 问题）」与
+    「字节正常但模型看不见（模型/服务商问题）」。纯 Python 算 32x32 亮度，开销可忽略。
+    """
+    try:
+        import io
+
+        from PIL import Image
+
+        im = Image.open(io.BytesIO(data))
+        im.load()
+        g = im.convert("L").resize((32, 32))
+        px = list(g.getdata())
+        mean = sum(px) / len(px)
+        var = sum((p - mean) ** 2 for p in px) / len(px)
+        if mean > 248 and var < 30:
+            log.warning(
+                "[视觉] 疑似白图：%d KB %s %dx%d 亮度%.0f 方差%.0f",
+                len(data) // 1024,
+                im.format,
+                im.size[0],
+                im.size[1],
+                mean,
+                var,
+            )
+    except Exception:  # noqa: BLE001
+        pass  # 哨兵本身绝不能影响看图链路
+
+
 async def collect_vision_images(message) -> list[tuple[str, bytes]]:
     """
     收集消息里的图片，归一化成视觉模型能吃的 (mime, bytes)。
@@ -751,6 +788,8 @@ async def collect_vision_images(message) -> list[tuple[str, bytes]]:
                     if len(f) <= VISION_MAX_IMAGE_BYTES
                 ]
                 if frames:
+                    for f in frames:
+                        _warn_if_blank(f)
                     out.extend(("image/png", f) for f in frames)
                     continue
                 data, mime = first_frame_png(data), "image/png"
@@ -759,6 +798,7 @@ async def collect_vision_images(message) -> list[tuple[str, bytes]]:
             if len(data) > VISION_MAX_IMAGE_BYTES:
                 log.info("[视觉] 图片过大已跳过：%d 字节", len(data))
                 continue
+            _warn_if_blank(data)
             out.append((mime, data))
         except Exception as exc:  # noqa: BLE001
             log.info("[视觉] 取图失败，已跳过：%s", exc)
@@ -1031,7 +1071,15 @@ async def do_add_image(message, api, scope: str, scene_id: str, text: str) -> No
         await message.reply(content=f"下载图片失败：{exc}")
         return
 
-    kws = "、".join(result.keywords) if result.keywords else "（未关联关键词）"
+    # 关键词后面带（已存 N 张）：让人添加完就知道这个库现在多大
+    counts = await store.keyword_counts(result.keywords, group_openid)
+    kws = (
+        "、".join(
+            f"{k}（已存 {counts.get(k, 0)} 张）" for k in result.keywords
+        )
+        if result.keywords
+        else "（未关联关键词）"
+    )
     size_kb = result.size / 1024
     src_note = "（来自引用的图片）" if source == "引用的图片消息" else ""
     fmt = (result.mime or "").replace("image/", "").upper() or "未知"
@@ -1123,7 +1171,10 @@ async def do_batch_add(message, api, scope: str, scene_id: str, text: str) -> No
     if failed:
         body += f"，失败 {failed} 张"
     if keywords:
-        body += f"\n关键词：{'、'.join(keywords)}"
+        counts = await store.keyword_counts(keywords, group_openid)
+        body += "\n关键词：" + "、".join(
+            f"{k}（已存 {counts.get(k, 0)} 张）" for k in keywords
+        )
     log.info(
         "[批量添加] 共=%d 新增=%d 重复=%d 失败=%d", len(atts), added, dup, failed
     )

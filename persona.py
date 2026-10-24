@@ -214,6 +214,17 @@ def max_tokens() -> int:
 
 # ---------------- 角色卡 ----------------
 
+# 自身功能速查：bot.py 启动时用 HELP_TEXT 注入（单一事实源，跟 /help 永远一致）。
+# 起因：用户问「怎么删除图库来着」，角色卡里没有机器人自己的用法，模型只能
+# 凭空编「长按图标」（2026-10-23 实锤）。拼进系统提示词而不是消息里——静态、
+# 不随消息变长，每轮多几百 token 换「答得上来自己的功能」。
+_self_manual = ""
+
+
+def set_self_manual(text: str) -> None:
+    global _self_manual
+    _self_manual = (text or "").strip()
+
 
 def load_prompt() -> str | None:
     """读取角色卡（只读一次）。读不到则返回 None。"""
@@ -233,6 +244,20 @@ def load_prompt() -> str | None:
     return _prompt_cache
 
 
+def system_prompt() -> str | None:
+    """角色卡 + 自身功能速查，作为系统提示词。"""
+    prompt = load_prompt()
+    if prompt and _self_manual:
+        return (
+            prompt
+            + "\n\n【自身功能速查】用户问「怎么删图库/怎么添加/有什么指令」等关于"
+            + "你（这台机器人）自身用法的问题时，按下面的事实回答（用你自己的口吻），"
+            + "不知道就说不知道，禁止编造界面上不存在的操作：\n"
+            + _self_manual
+        )
+    return prompt
+
+
 def available() -> bool:
     """API Key 和角色卡都在，才启用人格聊天。"""
     return bool(text_key()) and load_prompt() is not None
@@ -246,7 +271,7 @@ async def generate(history: list[dict], text: str) -> str | None:
     text = (text or "").strip()
     if not text:
         return None
-    prompt = load_prompt()
+    prompt = system_prompt()
     key = text_key()
     if not prompt or not key:
         return None
@@ -264,7 +289,7 @@ async def generate_vision(
     """
     if not images:
         return None
-    prompt = load_prompt()
+    prompt = system_prompt()
     key = vl_key()
     if not prompt or not key:
         return None

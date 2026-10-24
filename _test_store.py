@@ -183,6 +183,14 @@ async def main() -> int:
         os.path.join(store.images_dir, r3.sha256[:2])
     )))
 
+    print("\n[10] keyword_counts（/添加 提示「已存 N 张」的数据源）")
+    counts = await store.keyword_counts(["deepseek", "新关键词", "蓝色大肥鱼", "不存在"])
+    check("deepseek 计 2 张", counts.get("deepseek") == 2, str(counts))
+    check("新关键词计 1 张", counts.get("新关键词") == 1)
+    check("蓝色大肥鱼计 1 张", counts.get("蓝色大肥鱼") == 1)
+    check("不存在的关键词不出现", "不存在" not in counts)
+    check("空列表返回空 dict", (await store.keyword_counts([])) == {})
+
     print(f"\n{'=' * 50}")
     print(f"失败 {failures} 项")
     return 1 if failures else 0

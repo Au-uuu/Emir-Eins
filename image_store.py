@@ -1179,6 +1179,31 @@ class ImageStore:
             )
             return [(r["keyword"], r["c"]) for r in rows]
 
+    async def keyword_counts(
+        self, keywords: Sequence[str], group_openid: str | None = None
+    ) -> dict[str, int]:
+        """按关键词查「公开层 + 指定群私有层」各自的图片数（与 /图库 列表同口径）。"""
+        return await asyncio.to_thread(
+            self._keyword_counts_sync, keywords, group_openid
+        )
+
+    def _keyword_counts_sync(
+        self, keywords: Sequence[str], group_openid: str | None
+    ) -> dict[str, int]:
+        kws = [k for k in dict.fromkeys(keywords) if k]
+        if not kws:
+            return {}
+        g = self._group_of(group_openid)
+        ph = ",".join("?" * len(kws))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT keyword, COUNT(*) c FROM keywords "
+                f"WHERE owner_group IN ('', ?) AND keyword IN ({ph}) "
+                f"GROUP BY keyword",
+                (g, *kws),
+            ).fetchall()
+        return {r["keyword"]: r["c"] for r in rows}
+
     async def find_keywords(
         self, query: str, group_openid: str | None = None, limit: int = 15
     ) -> list[tuple[str, int]]:

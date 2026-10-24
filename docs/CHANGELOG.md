@@ -62,6 +62,12 @@
 | 2026-10-11 | 知识库纳入坚果云异地备份（`deploy/backup-nutstore.sh` 增 `kb/`） | [kb-backup](changes/2026-10-11-kb-backup.md) |
 | 2026-10-12 | R6 战绩查询：`/r6 [平台] 昵称`，走 R6 Arenyze 公开 API（段位/RP/本赛季/近几季/常用干员） | [r6-stats](changes/2026-10-12-r6-stats.md) |
 | 2026-10-12 | 向管理员汇报（主动私聊）+ R6 key 过期提醒（可扩展的定时检查项） | [admin-notices](changes/2026-10-12-admin-notices.md) |
+| 2026-10-12 | R6 绑定（`/r6绑定`，重绑即覆盖）、`/r6网站` 外链、帮助分层、错误分类 | [r6-bind-help-and-errors](changes/2026-10-12-r6-bind-help-and-errors.md) |
+| 2026-10-13 | 知识库召回收紧——必须提到作品/角色才检索，日常泛词不触发 | [kb-gate-tighten](changes/2026-10-13-kb-gate-tighten.md) |
+| 2026-10-13 | 公告推送关键词放宽（活动/联动/上线/开放/预告也推；服务器 .env） | [news-keywords-widen](changes/2026-10-13-news-keywords-widen.md) |
+| 2026-10-21 | `/今日运势`：本地黄历（lunar-python）+ 确定性抽签（同人同日固定） | [fortune](changes/2026-10-21-fortune.md) |
+| 2026-10-21 | 复读指令必须带斜杠（裸「复读/echo」不再触发，走人格） | [echo-require-slash](changes/2026-10-21-echo-require-slash.md) |
+| 2026-10-24 | 群反馈修复：`/添加` 提示「已存 x 张」、人格自知用法（HELP_TEXT 注入系统提示词）、热梗知识库、白图哨兵（10-23 白图诊断为平台临时故障） | [group-feedback-fixes](changes/2026-10-24-group-feedback-fixes.md) |
 
 ## 约定
 
