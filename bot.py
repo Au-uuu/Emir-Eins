@@ -181,6 +181,24 @@ class Cooldown:
 dedup = DedupCache()
 cooldown = Cooldown(GROUP_REPLY_COOLDOWN)
 
+# 被动回复 msg_seq 计数：QQ 按「msg_id + msg_seq」去重，而 SDK 的 reply() 永远发
+# seq=1 且不自增——同一条消息回第二条必被 40054005 整条拒掉（/图库 预览的
+# 「拼图 + 文字清单」双回复踩过：10-14/10-20/10-22 全中，文字清单从未送达）。
+# 需要对同一条消息回多条时，每次都经 next_msg_seq 取号。
+_msg_seq_counters: dict[str, int] = {}
+
+
+def next_msg_seq(msg_id: str | None) -> int:
+    if not msg_id:
+        return 1
+    seq = _msg_seq_counters.get(msg_id, 0) + 1
+    _msg_seq_counters[msg_id] = seq
+    if len(_msg_seq_counters) > 1024:  # 防泄漏：msg_id 五分钟就失效，丢旧的一半
+        for k in list(_msg_seq_counters)[: len(_msg_seq_counters) // 2]:
+            _msg_seq_counters.pop(k, None)
+    return seq
+
+
 # 人格聊天的每会话限流（与图片指令的限流分开，互不影响）
 chat_cooldown = Cooldown(CHAT_COOLDOWN)
 
@@ -967,13 +985,14 @@ async def send_image(
 
 
 async def _send_preview_sheet(
-    message, api, scope: str, scene_id: str, recs: list
+    message, api, scope: str, scene_id: str, recs: list, start: int = 1
 ) -> bool:
     """
     把一页缩略图**拼成一张图**，作为对本条消息的被动回复发出去。
 
     一条消息只能带一张图，所以用拼图承载整页预览；这样只占 1 次被动回复，
-    也不依赖主动消息权限。失败返回 False（调用方降级为文字清单）。
+    也不依赖主动消息权限。start 是这页第一张的序号（跨页连续，见
+    make_contact_sheet）。失败返回 False（调用方降级为文字清单）。
     """
     paths = []
     for rec in recs:
@@ -983,7 +1002,7 @@ async def _send_preview_sheet(
     if not paths:
         return False
 
-    sheet = await asyncio.to_thread(make_contact_sheet, paths)
+    sheet = await asyncio.to_thread(make_contact_sheet, paths, start=start)
     if not sheet:
         return False
     return await _reply_image_bytes(
@@ -1009,7 +1028,12 @@ async def _reply_image_bytes(
                 up, scope, scene_id, tmp, name, force_fresh=(attempt == 2)
             )
             try:
-                await message.reply(msg_type=7, media={"file_info": file_info})
+                # msg_seq 按次取号：重试时换号，避免上一次已被计序而撞去重
+                await message.reply(
+                    msg_type=7,
+                    media={"file_info": file_info},
+                    msg_seq=next_msg_seq(message.id),
+                )
                 return True
             except Exception as exc:  # noqa: BLE001
                 if attempt == 2:
@@ -1554,14 +1578,14 @@ def _association_note(info: tuple[str, list[str]] | None, kw: str) -> str:
     return f"\n「{kw}」是关联词，主关键词「{main}」{tail}"
 
 
-def _text_image_list(recs: list) -> str:
-    """预览图发不出去时的文字清单兜底。"""
+def _text_image_list(recs: list, start: int = 1) -> str:
+    """预览图下面的文字清单；序号从 start 起跨页连续，与拼图左上角一致。"""
     if not recs:
         return ""
     return "\n" + "\n".join(
-        f"#{r.id}  {r.width or '?'}x{r.height or '?'}  "
+        f"{num}. #{r.id}  {r.width or '?'}x{r.height or '?'}  "
         f"{'、'.join(r.keywords) or '无关键词'}"
-        for r in recs
+        for num, r in enumerate(recs, start)
     )
 
 
@@ -1644,26 +1668,30 @@ async def do_gallery(
             )
             return
         page_recs = recs[(page - 1) * GALLERY_IMG_PAGE : page * GALLERY_IMG_PAGE]
+        # 序号跨页连续：第 2 页从 9 开始接着编，与拼图左上角、文字清单一致
+        page_start = (page - 1) * GALLERY_IMG_PAGE + 1
 
         header = (
             f"关键词「{kw}」共 {total} 张"
-            f"（第 {page}/{pages} 页，每页 {GALLERY_IMG_PAGE}）{note}"
+            f" · 页码 {page}/{pages}（每页 {GALLERY_IMG_PAGE}）{note}"
         )
 
         sheet_ok = False
         if api is not None:
             sheet_ok = await _send_preview_sheet(
-                message, api, scope, scene_id or group_openid, page_recs
+                message, api, scope, scene_id or group_openid, page_recs, page_start
             )
         if sheet_ok:
-            header += f"\n上方拼图共 {len(page_recs)} 张（左上角序号对应下面清单）"
+            header += f"\n上方拼图共 {len(page_recs)} 张（左上角序号跨页连续，对应下面清单）"
         elif api is not None:
             header += "\n（预览图发送失败，已用文字列出）"
-        header += _text_image_list(page_recs)
+        header += _text_image_list(page_recs, page_start)
         if page < pages:
             header += f"\n…发送 /图库 {kw} {page + 1} 看下一页"
 
-        await message.reply(content=header)
+        # 这是同一条消息的第二条回复（第一条是拼图）：msg_seq 必须取新号，
+        # 否则被 QQ 判成重复整条拒掉（40054005，10-14/10-20/10-22 全中过）
+        await message.reply(content=header, msg_seq=next_msg_seq(message.id))
         return
 
     await message.reply(
@@ -2406,7 +2434,8 @@ async def _r6_fetch(message, platform: str, name: str):
     ⚠️ 这里**只回复一次**。QQ 的被动回复是「msg_id + msg_seq」去重：对同一条消息
     发第二条必须递增 msg_seq，而 `message.reply()` 不会自动递增——多发一条就会被
     判成重复消息整个丢掉（40054005 消息被去重，实测把卡片都吞了）。
-    想做「正在查…」这类前置提示，必须自己维护 msg_seq 计数器，别直接 reply 两次。
+    真要对同一条消息回多条，每次经 `next_msg_seq(message.id)` 取号
+    （/图库 预览的「拼图 + 文字清单」就是这么做的）。
     """
     try:
         data = await asyncio.to_thread(r6stats.query, platform, name)

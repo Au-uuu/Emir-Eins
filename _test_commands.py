@@ -216,6 +216,34 @@ async def main() -> int:
     await bot.do_gallery(m, "/图库 不存在")
     check("不存在的关键词给提示", "没有图片" in (m.text_replies[0] or ""))
 
+    print("\n[7b] /图库 预览流：双回复 msg_seq 递增 + 页码 + 跨页连续编号")
+    m = FakeMessage("/图库 deepseek", msg_id="g_prev1")
+    await bot.do_gallery(
+        m, "/图库 deepseek", group_openid="G_TEST", api=FakeApi(),
+        scope="group", scene_id="G_TEST",
+    )
+    check("回了拼图和文字两条", len(m.replies) == 2, str(m.replies)[:100])
+    seqs = [r.get("msg_seq") for r in m.replies]
+    check("第二条回复 msg_seq=2（防 40054005 整条拒掉）", seqs == [1, 2], str(seqs))
+    body = m.text_replies[0] or ""
+    check("图片下方有页码", "页码 1/1" in body, body[:80])
+    check("清单带连续编号和 #id", "1. #" in body, body[:160])
+
+    # 造到 9 张（[6b] 已入 2 张新肥鱼），凑出第 2 页，验证编号接着上一页
+    for i in range(7):
+        await bot.store.add_from_attachment(
+            write(f"p{i}.png", png_bytes((i * 30, 90, 160))), ["新肥鱼"]
+        )
+    m = FakeMessage("/图库 新肥鱼 2", msg_id="g_prev2")
+    await bot.do_gallery(
+        m, "/图库 新肥鱼 2", group_openid="G_TEST", api=FakeApi(),
+        scope="group", scene_id="G_TEST",
+    )
+    body = m.text_replies[0] or ""
+    check("第 2 页页码 2/2", "页码 2/2" in body, body[:80])
+    check("第 2 页编号从 9 接着编", "9. #" in body, body[:160])
+    check("第 2 页不会出现 1. 开头的编号", "\n1. #" not in body, body[:160])
+
     print("\n[8] /help 分支（无背景图时退回 文本+按钮）")
     # 图片形态由 _test_help_image.py 专门覆盖；这里固定成「没有背景图」，
     # 保证本用例只验证文本兜底这条路径。

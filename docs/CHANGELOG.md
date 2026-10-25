@@ -68,6 +68,7 @@
 | 2026-10-21 | `/今日运势`：本地黄历（lunar-python）+ 确定性抽签（同人同日固定） | [fortune](changes/2026-10-21-fortune.md) |
 | 2026-10-21 | 复读指令必须带斜杠（裸「复读/echo」不再触发，走人格） | [echo-require-slash](changes/2026-10-21-echo-require-slash.md) |
 | 2026-10-24 | 群反馈修复：`/添加` 提示「已存 x 张」、人格自知用法（HELP_TEXT 注入系统提示词）、热梗知识库、白图哨兵（10-23 白图诊断为平台临时故障） | [group-feedback-fixes](changes/2026-10-24-group-feedback-fixes.md) |
+| 2026-10-24 | /图库 预览：msg_seq 计数器修「文字清单被 40054005 整条吞」（10-14 起全中）；预览图下方显示页码 x/n；拼图与清单编号跨页连续 | [gallery-msgseq-pagenum](changes/2026-10-24-gallery-msgseq-pagenum.md) |
 
 ## 约定
 

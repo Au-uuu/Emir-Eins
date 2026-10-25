@@ -565,11 +565,13 @@ def make_card_sheet(
 
 
 def make_contact_sheet(
-    paths: "list[str]", cols: int = 4, cell: int = 300, pad: int = 6
+    paths: "list[str]", cols: int = 4, cell: int = 300, pad: int = 6,
+    start: int = 1,
 ) -> bytes | None:
     """
     把多张本地图片拼成一张网格图（一条消息只能带一张图，就用拼图承载一页预览）。
-    左上角标 1..N 序号。失败返回 None。
+    左上角序号从 start 起连续编号——跨页不归零，第 2 页接着第 1 页的最大号
+    （页码翻页后编号仍与文字清单一一对应）。失败返回 None。
     """
     try:
         import io
@@ -602,11 +604,15 @@ def make_contact_sheet(
                     sheet.paste(im, (x, y))
             except Exception:  # noqa: BLE001
                 continue
+            label = str(start + i)
             r, c = divmod(i, cols)
             bx = pad + c * (cell + pad)
             by = pad + r * (cell + pad)
-            draw.rectangle([bx, by, bx + 26, by + 20], fill=(0, 0, 0))
-            draw.text((bx + 7, by + 3), str(i + 1), fill=(255, 255, 255))
+            bw = max(26, 10 + 8 * len(label))  # 三位数也不挤出黑底
+            draw.rectangle([bx, by, bx + bw, by + 20], fill=(0, 0, 0))
+            draw.text(
+                (bx + (bw - 6 * len(label)) // 2, by + 3), label, fill=(255, 255, 255)
+            )
 
         buf = io.BytesIO()
         sheet.save(buf, format="JPEG", quality=82, optimize=True)

@@ -152,7 +152,7 @@ async def main():
     await bot.do_gallery(m, "/图库 缩", G, api, "group", G)
     check("只发了 1 张（拼图）", len(m.images) == 1, str(len(m.images)))
     check("没有走主动消息", len(api.sent) == 0, str(len(api.sent)))
-    check("提示第 1/2 页", "第 1/2 页" in m.text, m.text.splitlines()[0])
+    check("提示第 1/2 页", "页码 1/2" in m.text, m.text.splitlines()[0])
     check("提示下一页", "/图库 缩 2" in m.text, m.text)
 
     print("\n[5] /图库 缩 2 -> 第 2 页拼图")
@@ -160,7 +160,8 @@ async def main():
     m2 = FakeMessage()
     await bot.do_gallery(m2, "/图库 缩 2", G, api2, "group", G)
     check("第 2 页也 1 张拼图", len(m2.images) == 1, str(len(m2.images)))
-    check("页码正确", "第 2/2 页" in m2.text, m2.text.splitlines()[0])
+    check("页码正确", "页码 2/2" in m2.text, m2.text.splitlines()[0])
+    check("第 2 页编号从 9 接着编", "9. #" in m2.text, m2.text.splitlines()[2])
 
     print("\n[6] 拼图失败 -> 降级文字清单")
     real = bot.make_contact_sheet
