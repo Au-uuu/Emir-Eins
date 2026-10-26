@@ -112,7 +112,7 @@ QQ ←→ SnowLuma(OneBot WS) ←→ qq-bridge ←→ DSH Web API ←→ agent(p
 | 端点 | `https://opencode.ai/inference/go/openai/v1/chat/completions` |
 | 模型 ID | `deepseek-v4.1-flash` |
 | 协议 | OpenAI 兼容（`@ai-sdk/openai-compatible`） |
-| 输入 | **文本 + 图片**（多模态；1M 上下文） |
+| 输入 | **文本 + 图片**（多模态；1M 上下文）※ |
 | 最大输出 | 384K（模型能力，不代表套餐） |
 | 价格 | 空闲 $0.15 / $0.60；高峰 $0.30 / $1.20（每 1M input/output） |
 | 缓存读 | 空闲 $0.003 / 高峰 $0.006 |
@@ -121,6 +121,10 @@ QQ ←→ SnowLuma(OneBot WS) ←→ qq-bridge ←→ DSH Web API ←→ agent(p
 
 > 第三方文档里还会看到 `https://opencode.ai/zen/go/v1`，那是 Zen/旧版路径；
 > **以官方 Go 文档的 `/inference/go/openai/v1` 为准**，不要在 `.env` 里混着填。
+>
+> ※ 模态信息来自 Pi 的模型目录与 qq-bridge 的实测记录（它把 `deepseek-flash`
+> 直接用在多模态会话里）；OpenCode Go 官方文档没有逐模型列输入模态。
+> 接之前**先用一张图实测**，别只看文档。
 
 ### 3.2 直接改 `.env` 就能接（文本+视觉同一套）
 
