@@ -137,16 +137,16 @@ QQ_BOT_VL_KEY=sk-你的GoKey
 QQ_BOT_VL_URL=https://opencode.ai/inference/go/openai/v1/chat/completions
 QQ_BOT_VL_MODEL=deepseek-v4.1-flash
 QQ_BOT_VL_IMAGE_FORMAT=data_uri
-QQ_BOT_VL_DESCRIBE=0
+QQ_BOT_VL_DESCRIBE=1
 QQ_BOT_CHAT_MAX_TOKENS=2048
 ```
 
 - `persona.py` 走的是标准 OpenAI 兼容格式，**不需要改代码**；
   图片已经是 `data:image/...;base64,...`，符合 OpenAI 多模态格式。
-- 想保留 `qwen-flash-character` 的人设语气：`QQ_BOT_VL_DESCRIBE=1` +
-  文本仍用 qwen，只让 DS/GLM 做客观描述。
+- 想保留 `qwen-flash-character` 的人设语气：只把 `QQ_BOT_VL_*` 指到 DS/GLM
+  做客观描述，文本仍用 qwen（`QQ_BOT_TEXT_*` 不填）；`QQ_BOT_VL_DESCRIBE=1`。
 - 推理模型建议把 `QQ_BOT_CHAT_MAX_TOKENS` 从 512 提到 1024–2048，
-  否则思考内容可能挤占回复预算。
+  否则思考内容可能挤占回复预算（实测 256 会直接吐空 `content`）。
 - 先用一条群 @ 消息 + 一张图实测；日志里应看到模型返回 200，且回复不为空。
 
 ### 3.3 必须知道的使用边界（重要）
@@ -165,21 +165,57 @@ QQ_BOT_CHAT_MAX_TOKENS=2048
    模型名以官方文档为准）或 OpenCode Zen 按量付费；两者都没有“仅限 coding
    agent”的边界问题。我们的 `persona.py` 换 URL/Key 即可。
 
-### 3.4 如果要在 `persona.py` 里补会话头（可选，未实施）
+### 3.4 已经补上的两个必需请求头（2026-10-26 实测）
 
-```python
-# _request_sync 里构造 headers 时
-headers={
-    "Authorization": f"Bearer {key}",
-    "Content-Type": "application/json",
-    "User-Agent": "Emir-Eins-QQBot/1.0",
-    # 同一个 QQ 会话复用同一个值，便于缓存；不要每轮随机
-    "x-opencode-session": session_key or "qqbot",
-}
+只改 `.env` 还不够。实测发现 OpenCode Go 前面有两道门：
+
+1. **默认 `Python-urllib/3.12` 的 UA 会被 Cloudflare 拦**：返回
+   `403 error code: 1010`；
+2. 换上自定义 UA 后，又会要求 **`x-opencode-session`**：
+   `400 MissingSessionID`，提示 “cannot be routed efficiently”。
+
+所以 `persona.py` 现在会：
+
+- 给所有模型请求带 `User-Agent: Emir-Eins-QQBot/1.0`
+  （可用 `QQ_BOT_TEXT_UA` 覆盖）；
+- 只在 `opencode.ai` 端点带 `x-opencode-session`，值是
+  `sha256(scope)[:32]`（`group:<openid>` / `c2c:<openid>`）。
+  这样同一群/单聊稳定命中同一路由与缓存，又不会把 QQ openid 明文发出去；
+  换 DashScope / 智谱时不会多带这个头。
+
+`bot.py` 的 `persona_reply` 已把 `scope` 一路传给
+`generate` / `generate_vision` / `describe`；`_test_persona.py` 有 4 条
+断言守着（自定义 UA、scope 哈希、不同群 ID 不同、非 OpenCode 端点不带会话头）。
+
+### 3.5 单阶段看图会误判 → 用两阶段（重要实测）
+
+同一张纯色图，**不带人设**直接问 DS：红/绿/蓝/黄全对，文字图
+`MAAEND 42`、`终末地 42` 也能读对；**带上 6.6k 字的角色卡后**，
+单阶段 `generate_vision` 连续把红说成白、绿说成黑、蓝说成白、黄说成暗红。
+把角色卡去掉又立刻恢复正常。
+
+结论：**长角色卡 + 图片放在同一次调用里，DS 的视觉注意力会被人设文本带跑**，
+不是图片没传到（抓包确认 `data:image/png;base64,...` 正常、模型也返回 200）。
+
+所以生产配置用**两阶段**：
+
+```ini
+QQ_BOT_VL_DESCRIBE=1
 ```
 
-需要把 `scope`（`group:<openid>` / `c2c:<openid>`）一路传到 `_request_sync`。
-当前没做，避免为了一个未验证的供应商改公共链路。
+流程变成：
+
+1. `persona.describe()` 用 `DESCRIBE_PROMPT`（**不带人设**）客观描述图片；
+   实测红/绿/蓝/黄、文字、形状都准；
+2. 描述文本拼进输入，再由 `persona.generate()` 带角色卡生成回复。
+
+代价是每张图多一次调用、多 3~5 秒；换来识图事实准确。若更在意速度且能接受
+偶尔认错颜色/细节，再考虑 `QQ_BOT_VL_DESCRIBE=0` 或把视觉换回
+`qwen3-vl-plus`。
+
+> 另外：`max_tokens` 太小时，推理 token 会把回复预算吃光。实测
+> `max_tokens=256` 时纯色图只输出 reasoning、`content` 为空；512 能回，
+> 2048 更稳。生产已设 `QQ_BOT_CHAT_MAX_TOKENS=2048`。
 
 ---
 
@@ -256,7 +292,7 @@ QQ_BOT_VIDEO_TIMEOUT=60
      与 DS V4.1 Flash 的人设稳定性，再决定是否切。
 3. **确认模型后**：
    - 若切 DS V4.1 Flash：加 §4.3 的 `frames` 模式（视频才能继续用）；
-   - 加 `x-opencode-session` / 自定义 UA，降低被判定滥用的概率。
+   - 自定义 UA 与 `x-opencode-session` 已补（见 §3.4）。
 4. **有余力再做**：会话级群设定、发言人昵称注入、按群 token 统计。
 5. **不做**：仿真群友、主动插话、MCP 工具面、Web 控制台。
 

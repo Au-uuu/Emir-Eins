@@ -2366,23 +2366,23 @@ async def persona_reply(message, scope: str, content: str) -> None:
 
     if media and persona.describe_mode():
         # 两阶段：视觉模型（GLM）先客观描述，再交给文本链路（qwen）转人设。
-        desc = await persona.describe(images, video_url, hints)
+        desc = await persona.describe(images, video_url, hints, scope)
         if desc:
             model_text = f"（视觉模型对这条内容的客观描述：\n{desc}\n）\n" + model_text
-            reply = await persona.generate(history, model_text)
+            reply = await persona.generate(history, model_text, scope)
         elif images:
             # 描述失败：退回单次视觉调用（仍带打标线索）
             if hints:
                 model_text = hints + model_text
-            reply = await persona.generate_vision(history, model_text, images)
+            reply = await persona.generate_vision(history, model_text, images, scope)
         else:
-            reply = await persona.generate(history, model_text)
+            reply = await persona.generate(history, model_text, scope)
     elif images:
         if hints:
             model_text = hints + model_text
-        reply = await persona.generate_vision(history, model_text, images)
+        reply = await persona.generate_vision(history, model_text, images, scope)
     else:
-        reply = await persona.generate(history, model_text)
+        reply = await persona.generate(history, model_text, scope)
     if not reply:
         log.info("[人格] 本轮无回复: scope=%s", scope)
         if image_only:

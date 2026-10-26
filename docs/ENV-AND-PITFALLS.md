@@ -77,7 +77,11 @@
 
 | 变量 | 说明 |
 |---|---|
-| `QQ_BOT_TEXT_MODEL` | 人格文本模型（当前 `qwen-flash`）；**知识库构建不要占用它** |
+| `QQ_BOT_TEXT_MODEL` | 人格文本模型（当前 `deepseek-v4.1-flash`，OpenCode Go）；**知识库构建不要占用它** |
+| `QQ_BOT_VL_MODEL` | 视觉模型（当前也是 `deepseek-v4.1-flash`，与文本同 Key/端点） |
+| `QQ_BOT_VL_DESCRIBE` | 当前 `1`（两阶段）：DS 带 6.6k 字人设单阶段看图会认错颜色，必须让视觉先做客观描述 |
+| `QQ_BOT_CHAT_MAX_TOKENS` | 当前 `2048`；DS 是推理模型，512 在复杂图/长思考时可能被 reasoning 吃光 |
+| `QQ_BOT_TEXT_UA` | 可选；OpenCode Go 的 Cloudflare 会 403 默认 `Python-urllib` UA，代码默认 `Emir-Eins-QQBot/1.0` |
 | `QQ_BOT_R6_KEY` / `QQ_BOT_R6_KEY_EXPIRE` | Arenyze key 与到期日（到期前管理员会被私聊提醒） |
 | `QQ_BOT_R6_TIMEOUT` | R6 接口超时秒数（默认 25） |
 | `QQ_BOT_NEWS_POLL_MINUTES` | 公告轮询间隔（`0` = 关闭主动推送） |
@@ -223,6 +227,8 @@ python3 -c "import kb; print(kb.search('今日运势'))"
 | `[R6] 查询 platform=... name=...` | 收到查询 |
 | `[R6] 查无此人` / `[R6] 接口不稳定` / `被限流，N 分钟后再试` | 三类失败，话术已分开 |
 | `[人格] 触发限流，已跳过` | 人格回复被节流（正常保护） |
+| `[模型] ... in=... out=... reasoning=... cost=...` | 每次模型调用的用量/费用；`reasoning` 接近 `max_tokens` 要留意 |
+| `[模型] 回复为空：推理已用 ...` | 推理吃满 `max_tokens`，调大 `QQ_BOT_CHAT_MAX_TOKENS` |
 | `摘要: [QQ小程序]…` | **看图的卡片描述**，不是公告抓取（别误判） |
 | `处理群全量指令失败: 消息被去重` | **msg_seq 没递增**（见 §7.2） |
 
@@ -355,6 +361,23 @@ $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($py))
 
 ---
 
+### 7.15 OpenCode Go 的 403 / 400，以及「长人设看图会瞎」
+- **现象**：切到 `deepseek-v4.1-flash` 后，`persona.py` 调模型返回
+  `403 error code: 1010`；手动 curl/脚本却 200。
+- **根因**：① OpenCode Go 前面的 Cloudflare 按 UA 拦默认 `Python-urllib`；
+  ② 换 UA 后又强制要 `x-opencode-session`，缺了报 `400 MissingSessionID`。
+- **修法**：`persona.py` 所有请求带自定义 UA；`opencode.ai` 端点带
+  `sha256(scope)[:32]` 作会话 ID。`scope` 由 `bot.persona_reply` 传入。
+- **另一个坑**：带 6.6k 字角色卡**单阶段**看图，DS 会把红/绿/蓝说成白/黑；
+  去掉人设就全对。**生产必须 `QQ_BOT_VL_DESCRIBE=1`**（无人设描述 → 人设回复）。
+- **再一个**：推理 token 计入 `max_tokens`。`256` 时纯色图只吐 reasoning、
+  `content` 为空；生产设 `2048`。
+- **防回归**：`_test_persona.py` 守 UA / 会话头 / 不同群 ID / 非 OpenCode 不带会话头；
+  日志里每次调用有 `[模型] ... reasoning=... cost=...` 一行，空回复会额外 warning。
+- **使用边界**：Go 面向 coding agent，QQ 闲聊属非编码流量；异常时先切回
+  Qwen / DeepSeek 官方 API。切换/回滚步骤见
+  `docs/changes/2026-10-26-opencode-go.md`。
+
 ## 8. 待办 / 观察项
 
 | 项 | 说明 |
@@ -363,6 +386,8 @@ $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($py))
 | Arenyze 用量 | 定期跑 `/me/usage`，若长期吃紧：① 去掉常用干员改 1 call/查 ② 或上 PRO（€3.99/月，50,000 次） |
 | 公告关键词 | 若活动推送太吵/太少，改 `.env` 的 `QQ_BOT_NEWS_KEYWORDS` 后重启 |
 | 群主权限 | 开「机器人主动发言」可解除每月 4 条主动消息限制 |
+| OpenCode Go | 观察是否被判定非编码流量；异常时切回 Qwen/DeepSeek 官方 API（步骤见 `changes/2026-10-26-opencode-go.md`） |
+| 视频抽帧 | 若切 DS 后仍想理解视频，按调研文档 §4.3 加 `QQ_BOT_VL_VIDEO_MODE=frames` |
 | `/今日运势` | 可做成图片卡片、加"本周运势"或"漂流瓶"玩法 |
 | KB 泛词表 | 发现新的误伤词条名，加进 `_GENERIC_NAMES` |
 | R6 卡片 | 可选加"数据更新于 X 分钟前" |

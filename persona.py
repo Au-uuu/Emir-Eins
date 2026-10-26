@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -212,6 +213,23 @@ def max_tokens() -> int:
         return 512
 
 
+def user_agent() -> str:
+    """自定义 UA：OpenCode Go 前面的 Cloudflare 会 403 默认的 Python-urllib。"""
+    return _env("QQ_BOT_TEXT_UA") or "Emir-Eins-QQBot/1.0"
+
+
+def session_id(scope: str = "") -> str:
+    """
+    会话 ID（发给 OpenCode Go 的 x-opencode-session）。
+
+    OpenCode Go 要求每个对话有稳定 ID 才肯路由；这里用 scope 的 SHA-256 前
+    32 位，既不把 QQ openid 明文发给第三方，又能让同一群/单聊命中同一缓存。
+    没传 scope 时用固定值兜底（其他供应商不会因为这个头拒绝）。
+    """
+    raw = (scope or "qqbot").strip() or "qqbot"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
 # ---------------- 角色卡 ----------------
 
 # 自身功能速查：bot.py 启动时用 HELP_TEXT 注入（单一事实源，跟 /help 永远一致）。
@@ -266,7 +284,7 @@ def available() -> bool:
 # ---------------- 生成 ----------------
 
 
-async def generate(history: list[dict], text: str) -> str | None:
+async def generate(history: list[dict], text: str, session: str = "") -> str | None:
     """生成一句回复。失败（网络/超时/内容安全拦截）一律返回 None，由调用方静默。"""
     text = (text or "").strip()
     if not text:
@@ -275,11 +293,14 @@ async def generate(history: list[dict], text: str) -> str | None:
     key = text_key()
     if not prompt or not key:
         return None
-    return await _request_with_retry(prompt, key, history, text)
+    return await _request_with_retry(prompt, key, history, text, None, None, session)
 
 
 async def generate_vision(
-    history: list[dict], text: str, images: list[tuple[str, bytes]]
+    history: list[dict],
+    text: str,
+    images: list[tuple[str, bytes]],
+    session: str = "",
 ) -> str | None:
     """
     带图消息走视觉模型。images 是 (mime, bytes) 列表，至少一张。
@@ -294,7 +315,7 @@ async def generate_vision(
     if not prompt or not key:
         return None
     return await _request_with_retry(
-        prompt, key, history, (text or "").strip(), list(images)
+        prompt, key, history, (text or "").strip(), list(images), None, session
     )
 
 
@@ -302,6 +323,7 @@ async def describe(
     images: list[tuple[str, bytes]],
     video_url: str | None = None,
     hint_text: str = "",
+    session: str = "",
 ) -> str | None:
     """
     两阶段模式的第一步：让视觉模型只做**客观描述**（用 DESCRIBE_PROMPT，不带人设）。
@@ -321,6 +343,7 @@ async def describe(
         (hint_text or "").strip(),
         list(images),
         video_url,
+        session,
     )
 
 
@@ -362,6 +385,7 @@ def _request_sync(
     text: str,
     images: list[tuple[str, bytes]] | None = None,
     video_url: str | None = None,
+    session: str = "",
 ) -> str | None:
     has_media = bool(images) or bool(video_url)
     messages = [{"role": "system", "content": prompt}]
@@ -381,13 +405,19 @@ def _request_sync(
         payload["thinking"] = {"type": vl_thinking()}
     url = vl_url() if has_media else text_url()
     req_timeout = vl_timeout(bool(video_url)) if has_media else timeout()
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        # OpenCode Go 前面的 Cloudflare 会拦默认的 Python-urllib UA（403 1010）
+        "User-Agent": user_agent(),
+    }
+    # 只有 OpenCode Go 强制要求会话 ID；别家不认识的请求头一律不加，避免节外生枝
+    if "opencode.ai" in url:
+        headers["x-opencode-session"] = session_id(session)
     req = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-        },
+        headers=headers,
     )
     try:
         with urllib.request.urlopen(req, timeout=req_timeout) as resp:
@@ -406,10 +436,30 @@ def _request_sync(
         return None
 
     choices = data.get("choices") or []
+    usage = data.get("usage") or {}
+    oc = usage.get("opencode") or {}
+    cache = (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
+    reasoning = (oc.get("tokens") or {}).get("reasoning", 0)
+    if usage:
+        # 一行成本/用量，方便观察 OpenCode Go 的峰谷价与实际消耗
+        log.info(
+            "[模型] %s in=%s out=%s cache=%s reasoning=%s cost=%s",
+            payload.get("model"),
+            usage.get("prompt_tokens"),
+            usage.get("completion_tokens"),
+            cache,
+            reasoning,
+            oc.get("list_cost", "-"),
+        )
     if not choices:
         log.warning("模型返回里没有 choices：%s", str(data)[:200])
         return None
     reply = ((choices[0].get("message") or {}).get("content") or "").strip()
+    if not reply and reasoning:
+        log.warning(
+            "[模型] 回复为空：推理已用 %s tokens，可能 max_tokens=%s 太小",
+            reasoning, payload.get("max_tokens"),
+        )
     if len(reply) > MAX_REPLY_CHARS:
         reply = reply[:MAX_REPLY_CHARS].rstrip() + "…"
     return reply or None

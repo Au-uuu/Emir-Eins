@@ -18,6 +18,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # 放在 import bot 之前，且 python-dotenv 默认不覆盖已有环境变量，故 .env 里开了也没用。
 os.environ["QQ_BOT_WEBSEARCH"] = "0"
 os.environ["QQ_BOT_KB_DIR"] = tempfile.mkdtemp()
+# 测试跑在线上服务器时会读到真实 .env；这里显式清空模型凭据，
+# 保证任何遗漏的 mock 都不会真的联网（下面需要视觉/文本的用例会自己再设）。
+for _k in (
+    "QQ_BOT_QWEN_KEY", "QQ_BOT_QWEN_URL", "QQ_BOT_TEXT_KEY", "QQ_BOT_TEXT_URL",
+    "QQ_BOT_VL_KEY", "QQ_BOT_VL_URL", "QQ_BOT_VL_MODEL", "QQ_BOT_QWEN_VL_MODEL",
+    "QQ_BOT_VL_DESCRIBE",
+):
+    os.environ[_k] = ""
 
 import bot  # noqa: E402
 import persona  # noqa: E402
@@ -28,7 +36,7 @@ from chat_store import ChatStore  # noqa: E402
 
 # 看图兜底（打标不确定时）会调 persona.describe → 测试里 mock 成空串，避免真联网。
 # 需要描述内容的小节（两阶段）会各自覆盖它。
-async def _no_describe(images, video_url=None, hint_text=""):
+async def _no_describe(images, video_url=None, hint_text="", session=""):
     return ""
 
 
@@ -144,13 +152,13 @@ async def main() -> int:
     bot.chat_cooldown.seconds = 0
     persona.available = lambda: True
 
-    async def ok_generate(history, text):
+    async def ok_generate(history, text, session=""):
         return f"【回答】收到「{text}」上下文{len(history)}条"
 
-    async def none_generate(history, text):
+    async def none_generate(history, text, session=""):
         return None
 
-    async def bad_generate(history, text):
+    async def bad_generate(history, text, session=""):
         return "这条回复里有测试敏感词"
 
     persona.generate = ok_generate
@@ -319,6 +327,54 @@ async def main() -> int:
     check("图片视觉超时默认 60", persona.vl_timeout(False) == 60)
     check("视频视觉超时默认 180", persona.vl_timeout(True) == 180)
 
+    # OpenCode Go：Cloudflare 拦默认 Python-urllib UA，且强制要 x-opencode-session
+    _text_env = {k: os.environ.get(k) for k in (
+        "QQ_BOT_TEXT_URL", "QQ_BOT_TEXT_KEY", "QQ_BOT_TEXT_MODEL", "QQ_BOT_TEXT_UA",
+    )}
+    os.environ["QQ_BOT_TEXT_URL"] = "https://opencode.ai/inference/go/openai/v1/chat/completions"
+    os.environ["QQ_BOT_TEXT_KEY"] = "test-key"
+    os.environ["QQ_BOT_TEXT_MODEL"] = "deepseek-v4.1-flash"
+    os.environ.pop("QQ_BOT_TEXT_UA", None)
+    captured: dict = {}
+
+    class _FakeResp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b'{"choices":[{"message":{"content":"ok"}}]}'
+
+    def _fake_urlopen(req, timeout=None):
+        captured["url"] = req.full_url
+        captured["headers"] = {k.lower(): v for k, v in req.header_items()}
+        return _FakeResp()
+
+    _orig_urlopen = persona.urllib.request.urlopen
+    persona.urllib.request.urlopen = _fake_urlopen
+    try:
+        persona._request_sync("sys", "test-key", [], "hi", None, None, "group:G1")
+        check("自定义 UA 已带上", captured["headers"].get("user-agent") == "Emir-Eins-QQBot/1.0",
+              captured["headers"].get("user-agent"))
+        check(
+            "OpenCode 会话头是 scope 的哈希",
+            captured["headers"].get("x-opencode-session") == persona.session_id("group:G1"),
+            captured["headers"].get("x-opencode-session"),
+        )
+        check("不同群会话 ID 不同", persona.session_id("group:G1") != persona.session_id("group:G2"))
+        os.environ["QQ_BOT_TEXT_URL"] = "https://example.com/chat"
+        persona._request_sync("sys", "test-key", [], "hi", None, None, "group:G1")
+        check("非 OpenCode 端点不带会话头", "x-opencode-session" not in captured["headers"])
+    finally:
+        persona.urllib.request.urlopen = _orig_urlopen
+        for _k, _v in _text_env.items():
+            if _v is None:
+                os.environ.pop(_k, None)
+            else:
+                os.environ[_k] = _v
+
     # 恢复环境
     for _k, _v in _vl_env.items():
         if _v is None:
@@ -344,11 +400,11 @@ async def main() -> int:
 
     seen = {}
 
-    async def fake_vision(history, text, images):
+    async def fake_vision(history, text, images, session=""):
         seen["history"], seen["text"], seen["images"] = history, text, images
         return "【看图】我看到了"
 
-    async def fail_generate(history, text):
+    async def fail_generate(history, text, session=""):
         raise AssertionError("带图消息不该走纯文本模型")
 
     persona.available = lambda: True
@@ -377,7 +433,7 @@ async def main() -> int:
         str(h),
     )
 
-    async def none_vision(history, text, images):
+    async def none_vision(history, text, images, session=""):
         return None
 
     persona.generate_vision = none_vision
@@ -427,17 +483,17 @@ async def main() -> int:
     orig_describe = persona.describe
     desc_seen = {}
 
-    async def fake_describe(images, video_url=None, hint_text=""):
+    async def fake_describe(images, video_url=None, hint_text="", session=""):
         desc_seen["images"], desc_seen["video"], desc_seen["hint"] = images, video_url, hint_text
         return "图中是初音未来（蓝绿双马尾），坐在栏杆上。"
 
-    async def fake_generate(history, text):
+    async def fake_generate(history, text, session=""):
         desc_seen["text"] = text
         return "【分析】检测到初音未来。【肯定】本机也在。"
 
     vcalls = {"n": 0}
 
-    async def no_vision(history, text, images):
+    async def no_vision(history, text, images, session=""):
         vcalls["n"] += 1
         raise AssertionError("两阶段模式不该走单次视觉链路")
 
@@ -457,7 +513,7 @@ async def main() -> int:
     check("两阶段：未走单次视觉链路", vcalls["n"] == 0)
 
     # describe 失败 → 退回单次视觉调用
-    async def fail_describe(images, video_url=None, hint_text=""):
+    async def fail_describe(images, video_url=None, hint_text="", session=""):
         return None
 
     persona.describe = fail_describe
@@ -586,7 +642,7 @@ async def main() -> int:
     persona.vision_enabled = lambda: True
     cap = {}
 
-    async def vision_cap(history, text, images):
+    async def vision_cap(history, text, images, session=""):
         cap["text"], cap["imgs"] = text, images
         return "【看图】好的"
 
@@ -611,7 +667,7 @@ async def main() -> int:
 
     persona.vision_enabled = lambda: False
 
-    async def text_cap(history, text):
+    async def text_cap(history, text, session=""):
         cap["text2"] = text
         return "【回答】好的"
 
