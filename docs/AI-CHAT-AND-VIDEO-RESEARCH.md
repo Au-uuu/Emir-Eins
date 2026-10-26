@@ -284,7 +284,8 @@ QQ_BOT_VIDEO_TIMEOUT=60
 
 ## 5. 建议的推进顺序
 
-1. **现在**：MaaEnd → QQ 群已上线（本文 §0）；观察几条真实任务通知。
+1. **现在**：MaaEnd → QQ 群已上线（本文 §0）；群聊上下文缓冲已上线
+   （`group_context.py`，最近 30 条 / 30 分钟）；OpenCode Go 已接入并实测。
 2. **下一步（低风险）**：
    - 给 `persona.py` 加 `usage` 日志（每次调用记 input/output/cache token，
      按峰谷价折算），先看清聊天到底烧多少；

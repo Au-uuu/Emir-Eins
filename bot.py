@@ -2392,6 +2392,7 @@ async def persona_reply(message, scope: str, content: str) -> None:
         )
         if ctx:
             model_text = ctx + model_text
+            log.info("[群聊上下文] 已注入 %d 字 scope=%s", len(ctx), scope)
     # 离线打标线索（Camie）：已收录角色的特征→标签映射，帮模型报出角色名
     hints = await tagger_hints(images) if images else ""
 
