@@ -14,6 +14,7 @@
 | `start.ps1` | 一键启动 |
 | `DEPLOY.md` | **第一次**部署到服务器（装环境、注册 systemd） |
 | `DEPLOY-UPDATE.md` | **日常更新**：把本地改动上传到服务器（含一键脚本 `deploy/upload.ps1`） |
+| `docs/ENV-AND-PITFALLS.md` | **环境与错题本**：线上环境、数据文件、R6 字段口径、排查手册、踩过的坑 |
 | `requirements.txt` | 依赖清单 |
 | `privacy-policy.md` | 提交开放平台用的隐私协议 |
 
