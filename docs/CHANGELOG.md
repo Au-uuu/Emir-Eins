@@ -71,6 +71,7 @@
 | 2026-10-24 | /图库 预览：msg_seq 计数器修「文字清单被 40054005 整条吞」（10-14 起全中）；预览图下方显示页码 x/n；拼图与清单编号跨页连续 | [gallery-msgseq-pagenum](changes/2026-10-24-gallery-msgseq-pagenum.md) |
 | 2026-10-26 | 新增 **[环境与错题本](ENV-AND-PITFALLS.md)**：线上环境/服务/部署、`data/` 状态文件、R6 字段口径与额度、KB 门槛、公告配额、排查手册 + 14 条踩坑记录 | [env-and-pitfalls](ENV-AND-PITFALLS.md) |
 | 2026-10-26 | 人格聊天切 OpenCode Go / DeepSeek V4.1 Flash（文本+识图）；补自定义 UA、`x-opencode-session`、用量日志；长人设单阶段看图会误判，改两阶段 | [opencode-go](changes/2026-10-26-opencode-go.md) |
+| 2026-10-26 | 群聊上下文缓冲：群里没 @ 机器人的消息也记最近 30 条/30 分钟，被 @ 时作为背景注入人格提示词 | [group-context](changes/2026-10-26-group-context.md) |
 
 ## 约定
 

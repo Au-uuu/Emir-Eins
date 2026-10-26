@@ -50,7 +50,7 @@
 | `kb.py` | 本地知识库 BM25 + 召回门槛；`tools/build_kb_server.py` 负责建库 |
 | `fortune.py` | `/今日运势`（本地黄历 + 确定性抽签） |
 | `ark_news.py` | 游戏公告抓取 + 主动推送；`notices.py` 管理员汇报 |
-| `push_store.py` | 公告开关/已见去重（SQLite）；`chat_store.py` 人格记忆 |
+| `push_store.py` | 公告开关/已见去重（SQLite）；`chat_store.py` 人格记忆；`group_context.py` 群聊上下文缓冲 |
 | `image_store.py` / `uploader.py` / `thumb` 相关 | 图库、上传、缩略图 |
 | `persona/依蜜尔爱因.md` | 人格卡（人设、看图规则等） |
 | `deploy/upload.ps1` | 部署脚本 |
@@ -62,6 +62,7 @@
 |---|---|---|
 | `data/images.db` + `images/` + `thumbs/` | 图库（图片、关键词、层级、缩略图） | ❌ 删了图库就没了 |
 | `data/chat.db` | 人格聊天记忆（**按场景**：`c2c:<openid>` / `group:<openid>`，默认 100 条） | 可删（丢记忆） |
+| `data/group_context.db` | 群聊上下文缓冲（最近 30 条 / 30 分钟；只存文字与媒体占位） | 可删（丢群聊背景） |
 | `data/push.db` | `push_groups`（群×游戏开关）+ `seen_news`（已见公告去重） | 可删（会重推/丢开关） |
 | `data/r6bind.db` | R6 绑定（openid → 平台/昵称/profile_id） | 可删（丢绑定） |
 | `data/r6_ranks.json` | Arenyze v7 段位表缓存（7 天 TTL） | 可删（会自动重拉） |
@@ -82,6 +83,8 @@
 | `QQ_BOT_VL_DESCRIBE` | 当前 `1`（两阶段）：DS 带 6.6k 字人设单阶段看图会认错颜色，必须让视觉先做客观描述 |
 | `QQ_BOT_CHAT_MAX_TOKENS` | 当前 `2048`；DS 是推理模型，512 在复杂图/长思考时可能被 reasoning 吃光 |
 | `QQ_BOT_TEXT_UA` | 可选；OpenCode Go 的 Cloudflare 会 403 默认 `Python-urllib` UA，代码默认 `Emir-Eins-QQBot/1.0` |
+| `QQ_BOT_GROUP_CONTEXT` | 群聊上下文缓冲开关（默认 `1`）；`0` 关闭 |
+| `QQ_BOT_GROUP_CONTEXT_MAX` / `_MINUTES` / `_CHARS` | 最近条数 / 分钟数 / 注入字数上限（默认 30 / 30 / 2000） |
 | `QQ_BOT_R6_KEY` / `QQ_BOT_R6_KEY_EXPIRE` | Arenyze key 与到期日（到期前管理员会被私聊提醒） |
 | `QQ_BOT_R6_TIMEOUT` | R6 接口超时秒数（默认 25） |
 | `QQ_BOT_NEWS_POLL_MINUTES` | 公告轮询间隔（`0` = 关闭主动推送） |
@@ -105,7 +108,7 @@
 
 | 指令 | 模块 | 说明 |
 |---|---|---|
-| 直接说话 / 群 @ | `bot.py` + `persona.py` + `kb.py` | 人格聊天，带本地知识库检索、看图（视觉模型）、联网搜索 |
+| 直接说话 / 群 @ | `bot.py` + `persona.py` + `kb.py` | 人格聊天，带本地知识库检索、看图（视觉模型）、联网搜索、群聊上下文缓冲 |
 | `/help`、`/help r6` | `bot.py` + `help_image.py` | 主帮助只列常用；`HELP_TOPICS` 放详细用法（r6/图库/公告/名片） |
 | `/今日运势`、`/运势` | `fortune.py` | 本地黄历 + 确定性抽签（同人同天固定），**必须带斜杠** |
 | `/r6`、`/彩六`、`/r6绑定`、`/r6网站` | `r6stats.py` / `r6_card.py` / `r6_bind.py` | 见 §6 |
@@ -229,6 +232,7 @@ python3 -c "import kb; print(kb.search('今日运势'))"
 | `[人格] 触发限流，已跳过` | 人格回复被节流（正常保护） |
 | `[模型] ... in=... out=... reasoning=... cost=...` | 每次模型调用的用量/费用；`reasoning` 接近 `max_tokens` 要留意 |
 | `[模型] 回复为空：推理已用 ...` | 推理吃满 `max_tokens`，调大 `QQ_BOT_CHAT_MAX_TOKENS` |
+| `群聊上下文：开（最近 30 条 / 30 分钟）` | 缓冲已启用；关闭时显示「关」 |
 | `摘要: [QQ小程序]…` | **看图的卡片描述**，不是公告抓取（别误判） |
 | `处理群全量指令失败: 消息被去重` | **msg_seq 没递增**（见 §7.2） |
 

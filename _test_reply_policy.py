@@ -12,10 +12,14 @@
 import asyncio
 import os
 import sys
+import tempfile
 import types
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+os.environ["QQ_BOT_GROUP_CONTEXT"] = "0"
+os.environ["QQ_BOT_GROUP_CONTEXT_DB"] = os.path.join(tempfile.mkdtemp(), "gc.db")
 
 import bot  # noqa: E402
 from image_store import ImageStore  # noqa: E402

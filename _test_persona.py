@@ -18,6 +18,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # 放在 import bot 之前，且 python-dotenv 默认不覆盖已有环境变量，故 .env 里开了也没用。
 os.environ["QQ_BOT_WEBSEARCH"] = "0"
 os.environ["QQ_BOT_KB_DIR"] = tempfile.mkdtemp()
+# 群聊上下文测试单独放 _test_group_context.py；这里关掉，避免线上 data/ 的
+# 真实群消息被拼进断言。
+os.environ["QQ_BOT_GROUP_CONTEXT"] = "0"
+os.environ["QQ_BOT_GROUP_CONTEXT_DB"] = os.path.join(tempfile.mkdtemp(), "gc.db")
 # 测试跑在线上服务器时会读到真实 .env；这里显式清空模型凭据，
 # 保证任何遗漏的 mock 都不会真的联网（下面需要视觉/文本的用例会自己再设）。
 for _k in (

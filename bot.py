@@ -26,6 +26,7 @@ from dotenv import load_dotenv
 
 import ark_news
 import fortune
+import group_context
 import help_image
 import kb
 import names
@@ -207,6 +208,18 @@ store = ImageStore()
 
 # 人格聊天的短期记忆（按会话隔离，默认每会话 100 条）
 chat = ChatStore()
+
+# 群聊上下文缓冲：群里没 @ 机器人的消息也记下来，被 @ 时作为背景注入。
+# 只存文字/占位，不进 chat.db，不参与人格记忆；默认开，QQ_BOT_GROUP_CONTEXT=0 关闭。
+group_ctx = group_context.GroupContextStore()
+if group_context.enabled():
+    log.info(
+        "群聊上下文：开（最近 %d 条 / %.0f 分钟）",
+        group_ctx.max_messages,
+        group_ctx.ttl_seconds / 60.0,
+    )
+else:
+    log.info("群聊上下文：关（QQ_BOT_GROUP_CONTEXT=0）")
 
 # 游戏公告推送：每群 × 每游戏独立开关 + 已见公告去重（默认全部关闭）
 push_store = PushStore()
@@ -699,6 +712,15 @@ def collect_video_url(message) -> str:
                 att.get("content_type"), att.get("filename"), att.get("url")
             ):
                 return att["url"]
+    return ""
+
+
+def media_placeholder(message) -> str:
+    """群聊缓冲用：只发图片/视频时记一个占位，不下载媒体。"""
+    if collect_video_url(message):
+        return "[视频]"
+    if collect_image_attachments(message):
+        return "[图片]"
     return ""
 
 
@@ -2361,6 +2383,15 @@ async def persona_reply(message, scope: str, content: str) -> None:
         summary = await asyncio.to_thread(websearch.search, content)
         if summary:
             model_text = websearch.wrap(summary) + model_text
+    # 群聊背景：把最近没 @ 机器人的群消息也喂给模型（只作背景，不主动回复）。
+    # 排除当前这条（正文已单独传了），避免同一句话出现两次。
+    if scope.startswith("group:"):
+        gid = scope.split(":", 1)[1]
+        ctx = await group_ctx.render(
+            gid, exclude_id=str(getattr(message, "id", "") or "")
+        )
+        if ctx:
+            model_text = ctx + model_text
     # 离线打标线索（Camie）：已收录角色的特征→标签映射，帮模型报出角色名
     hints = await tagger_hints(images) if images else ""
 
@@ -2745,6 +2776,12 @@ class MyClient(botpy.Client):
             # 是想让机器人看图，交给人格链路（没开看图则维持 /help）
             if not content:
                 if (collect_image_attachments(message) or collect_video_url(message)) and persona.vision_enabled():
+                    await group_ctx.remember(
+                        message.group_openid,
+                        message.id,
+                        author_openid(message),
+                        media_placeholder(message) or "[图片]",
+                    )
                     await persona_reply(
                         message, f"group:{message.group_openid}", IMAGE_ONLY_PLACEHOLDER
                     )
@@ -2756,7 +2793,10 @@ class MyClient(botpy.Client):
                 message, self.api, "group", message.group_openid, content
             ):
                 return
-            # 非指令文本 → 人格聊天（群里只在被 @ 时触发）
+            # 非指令文本 → 先记进群聊缓冲，再走人格聊天（群里只在被 @ 时触发）
+            await group_ctx.remember(
+                message.group_openid, message.id, author_openid(message), content
+            )
             await persona_reply(message, f"group:{message.group_openid}", content)
         except Exception as exc:  # noqa: BLE001
             log.exception("回复群@消息失败: %s", exc)
@@ -2778,11 +2818,27 @@ class MyClient(botpy.Client):
             # @ 了还带图且开了看图则是想让它看图，交给人格链路
             if mentions_me:
                 if (collect_image_attachments(message) or collect_video_url(message)) and persona.vision_enabled():
+                    await group_ctx.remember(
+                        message.group_openid,
+                        message.id,
+                        author_openid(message),
+                        media_placeholder(message) or "[图片]",
+                    )
                     await persona_reply(
                         message, f"group:{message.group_openid}", IMAGE_ONLY_PLACEHOLDER
                     )
                 else:
                     await send_help(message, self.api, "group", message.group_openid)
+            else:
+                # 没 @ 机器人的图片/视频也记一笔，后面被 @ 时能接上“刚发了张图”
+                ph = media_placeholder(message)
+                if ph:
+                    await group_ctx.remember(
+                        message.group_openid,
+                        message.id,
+                        author_openid(message),
+                        ph,
+                    )
             return
 
         log.info(
@@ -2812,6 +2868,12 @@ class MyClient(botpy.Client):
         except Exception as exc:  # noqa: BLE001
             log.exception("处理群全量指令失败: %s", exc)
             return
+
+        # 非指令：先记进群聊缓冲（没 @ 机器人的也记），再决定要不要回应。
+        # 命令不进来（上面 return 了），图片/视频在空正文分支已用占位记录。
+        await group_ctx.remember(
+            message.group_openid, message.id, author_openid(message), content
+        )
 
         # 被 @ 且不是指令 → 人格聊天。
         # 判定用 payload 的 mentions[].is_you，而不是正文里的 <@openid>
