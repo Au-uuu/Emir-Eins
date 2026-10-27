@@ -73,6 +73,7 @@
 | 2026-10-26 | 人格聊天切 OpenCode Go / DeepSeek V4.1 Flash（文本+识图）；补自定义 UA、`x-opencode-session`、用量日志；长人设单阶段看图会误判，改两阶段 | [opencode-go](changes/2026-10-26-opencode-go.md) |
 | 2026-10-26 | 群聊上下文缓冲：群里没 @ 机器人的消息也记最近 30 条/30 分钟，被 @ 时作为背景注入人格提示词 | [group-context](changes/2026-10-26-group-context.md) |
 | 2026-10-27 | 活人感：角色卡“标签是口癖不是格式”+ 回复延迟 0.5~1.8s + 长回复拆 2 条（msg_seq 递增） | [human-feel](changes/2026-10-27-human-feel.md) |
+| 2026-10-27 | 群友随机接话：全量模式下按概率接一句，默认 0，支持 `0.03`/`3%`，每群冷却 300s | [random-reply](changes/2026-10-27-random-reply.md) |
 
 ## 约定
 

@@ -84,6 +84,8 @@
 | `QQ_BOT_CHAT_MAX_TOKENS` | 当前 `2048`；DS 是推理模型，512 在复杂图/长思考时可能被 reasoning 吃光 |
 | `QQ_BOT_CHAT_DELAY_MIN/MAX` | 人格回复前随机延迟（默认 0.5/1.8 秒）；`0/0` 关闭 |
 | `QQ_BOT_CHAT_SPLIT` | 长回复拆条开关（线上 `1`）；`SPLIT_CHARS` 默认 80，`SPLIT_MAX` 默认 2 |
+| `QQ_BOT_RANDOM_REPLY` | 群友随机接话概率（默认 `0` 完全关闭；建议 `0.02~0.05`），支持 `0.03`/`3%`/`3` |
+| `QQ_BOT_RANDOM_REPLY_COOLDOWN` | 同一群两次随机接话的最小间隔秒数（默认 300） |
 | `QQ_BOT_TEXT_UA` | 可选；OpenCode Go 的 Cloudflare 会 403 默认 `Python-urllib` UA，代码默认 `Emir-Eins-QQBot/1.0` |
 | `QQ_BOT_GROUP_CONTEXT` | 群聊上下文缓冲开关（默认 `1`）；`0` 关闭 |
 | `QQ_BOT_GROUP_CONTEXT_MAX` / `_MINUTES` / `_CHARS` | 最近条数 / 分钟数 / 注入字数上限（默认 30 / 30 / 2000） |
@@ -236,6 +238,7 @@ python3 -c "import kb; print(kb.search('今日运势'))"
 | `[模型] 回复为空：推理已用 ...` | 推理吃满 `max_tokens`，调大 `QQ_BOT_CHAT_MAX_TOKENS` |
 | `群聊上下文：开（最近 30 条 / 30 分钟）` | 缓冲已启用；关闭时显示「关」 |
 | `[人格] 分条回复 2 段` | 长回复被拆成多条；条间有短暂停顿，`msg_seq` 自动递增 |
+| `[随机接话] group=... p=...` | 群友随机接话命中（只会在概率 >0 时出现）；带群冷却 |
 | `摘要: [QQ小程序]…` | **看图的卡片描述**，不是公告抓取（别误判） |
 | `处理群全量指令失败: 消息被去重` | **msg_seq 没递增**（见 §7.2） |
 

@@ -83,6 +83,28 @@ CHAT_SPLIT = (os.getenv("QQ_BOT_CHAT_SPLIT", "0") or "0").strip().lower() in (
 CHAT_SPLIT_CHARS = max(30, int(os.getenv("QQ_BOT_CHAT_SPLIT_CHARS", "80") or 80))
 CHAT_SPLIT_MAX = max(2, min(4, int(os.getenv("QQ_BOT_CHAT_SPLIT_MAX", "2") or 2)))
 
+
+def _env_prob(name: str, default: float = 0.0) -> float:
+    """读概率：支持 0.05 / 5% / 5 三种写法，统一到 0~1。"""
+    raw = (os.getenv(name, "") or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw[:-1]) / 100.0 if raw.endswith("%") else float(raw)
+    except ValueError:
+        return default
+    if value > 1:
+        value /= 100.0
+    return max(0.0, min(1.0, value))
+
+
+# 群友随机接话：非指令、没 @ 机器人、也没命中关键词时，按概率接一句。
+# 默认 0（完全关闭）；线上想要“活人感”再调到 0.02~0.05。冷却按群算。
+RANDOM_REPLY_P = _env_prob("QQ_BOT_RANDOM_REPLY", 0.0)
+RANDOM_REPLY_COOLDOWN = max(
+    0.0, float(os.getenv("QQ_BOT_RANDOM_REPLY_COOLDOWN", "300") or 0)
+)
+
 # 只发了图片时写进上下文的占位文本。
 # 开了看图时它同时作为发给视觉模型的文字部分；历史里也只存文本，
 # 后续轮次靠模型自己的回复就能知道图里是什么。
@@ -216,6 +238,9 @@ def next_msg_seq(msg_id: str | None) -> int:
 # 人格聊天的每会话限流（与图片指令的限流分开，互不影响）
 chat_cooldown = Cooldown(CHAT_COOLDOWN)
 
+# 群友随机接话的每群冷却（默认 300 秒；概率为 0 时完全不用）
+random_reply_cooldown = Cooldown(RANDOM_REPLY_COOLDOWN)
+
 # 图片库（SQLite + 本地文件）
 store = ImageStore()
 
@@ -233,6 +258,16 @@ if group_context.enabled():
     )
 else:
     log.info("群聊上下文：关（QQ_BOT_GROUP_CONTEXT=0）")
+
+# 群友随机接话：默认 0（完全关闭），线上调到 0.02~0.05 才有“偶尔插一句”的感觉
+if RANDOM_REPLY_P > 0:
+    log.info(
+        "群友随机接话：开（概率 %.1f%%，每群冷却 %.0f 秒）",
+        RANDOM_REPLY_P * 100.0,
+        RANDOM_REPLY_COOLDOWN,
+    )
+else:
+    log.info("群友随机接话：关（QQ_BOT_RANDOM_REPLY=0）")
 
 # 游戏公告推送：每群 × 每游戏独立开关 + 已见公告去重（默认全部关闭）
 push_store = PushStore()
@@ -2336,6 +2371,23 @@ def group_preamble(message, tag: str, dedup_prefix: str) -> str | None:
     return normalize_incoming(message.content)
 
 
+def should_random_reply(group_openid: str, content: str) -> bool:
+    """群友随机接话：概率 + 每群冷却 + 基本过滤。默认概率 0，永远返回 False。"""
+    if RANDOM_REPLY_P <= 0:
+        return False
+    text = (content or "").strip()
+    if not text or text.startswith("/"):
+        return False
+    if not persona.available():
+        return False
+    if random.random() >= RANDOM_REPLY_P:
+        return False
+    if not random_reply_cooldown.allow(group_openid):
+        log.debug("[随机接话] 群冷却中，跳过: %s", group_openid[:10])
+        return False
+    return True
+
+
 _SENTENCE_END = "。！？!?…\n"
 _SOFT_END = "，,；;、 "
 
@@ -2977,19 +3029,27 @@ class MyClient(botpy.Client):
             await persona_reply(message, f"group:{message.group_openid}", content)
             return
 
-        # 非指令：仅在配置了关键词且命中时才响应，避免在群里刷屏
-        if not KEYWORD or KEYWORD not in content:
+        # 非指令：先看关键词（命中就回固定提示），否则按概率随机接话。
+        # 关键词保持原行为；随机接话默认概率 0，只有显式配置才生效。
+        if KEYWORD and KEYWORD in content:
+            if not cooldown.allow(message.group_openid):
+                log.info("[群全量] 命中关键词但触发限流，已跳过")
+                return
+            log.info("[群全量] 命中关键词: %s", content[:30])
+            try:
+                await message.reply(content=f"检测到关键词「{KEYWORD}」")
+            except Exception as exc:  # noqa: BLE001
+                log.exception("回复群全量消息失败: %s", exc)
             return
 
-        if not cooldown.allow(message.group_openid):
-            log.info("[群全量] 命中关键词但触发限流，已跳过")
-            return
-
-        log.info("[群全量] 命中关键词: %s", content[:30])
-        try:
-            await message.reply(content=f"检测到关键词「{KEYWORD}」")
-        except Exception as exc:  # noqa: BLE001
-            log.exception("回复群全量消息失败: %s", exc)
+        if should_random_reply(message.group_openid, content):
+            log.info(
+                "[随机接话] group=%s p=%.1f%%: %s",
+                message.group_openid[:10],
+                RANDOM_REPLY_P * 100.0,
+                content[:30],
+            )
+            await persona_reply(message, f"group:{message.group_openid}", content)
 
     # 消息列表单聊
     async def on_c2c_message_create(self, message: C2CMessage):
