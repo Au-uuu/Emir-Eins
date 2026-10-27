@@ -62,7 +62,8 @@
 |---|---|---|
 | `data/images.db` + `images/` + `thumbs/` | 图库（图片、关键词、层级、缩略图） | ❌ 删了图库就没了 |
 | `data/chat.db` | 人格聊天记忆（**按场景**：`c2c:<openid>` / `group:<openid>`，默认 100 条） | 可删（丢记忆） |
-| `data/group_context.db` | 群聊上下文缓冲（最近 30 条 / 30 分钟；只存文字与媒体占位） | 可删（丢群聊背景） |
+| `data/group_context.db` | 群聊上下文缓冲（最近 60 条 / 120 分钟；只存文字与媒体占位） | 可删（丢群聊背景） |
+| `data/memory.db` | 黑话 / 人物印象 / 称呼（按群隔离；自动条目可删） | 可删（丢记忆） |
 | `data/push.db` | `push_groups`（群×游戏开关）+ `seen_news`（已见公告去重） | 可删（会重推/丢开关） |
 | `data/r6bind.db` | R6 绑定（openid → 平台/昵称/profile_id） | 可删（丢绑定） |
 | `data/r6_ranks.json` | Arenyze v7 段位表缓存（7 天 TTL） | 可删（会自动重拉） |
@@ -86,6 +87,9 @@
 | `QQ_BOT_CHAT_SPLIT` | 长回复拆条开关（线上 `1`）；`SPLIT_CHARS` 默认 80，`SPLIT_MAX` 默认 2 |
 | `QQ_BOT_RANDOM_REPLY` | 群友随机接话概率（默认 `0` 完全关闭；建议 `0.02~0.05`），支持 `0.03`/`3%`/`3` |
 | `QQ_BOT_RANDOM_REPLY_COOLDOWN` | 同一群两次随机接话的最小间隔秒数（默认 300） |
+| `QQ_BOT_MEMORY` | 黑话/印象/称呼总开关（默认 `1`） |
+| `QQ_BOT_MEMORY_LEARN_MINUTES` | 自动学习间隔分钟（线上 120；`0` 关闭） |
+| `QQ_BOT_MEMORY_LEARN_MAX_GROUPS` | 每轮最多看几个群（默认 5） |
 | `QQ_BOT_TEXT_UA` | 可选；OpenCode Go 的 Cloudflare 会 403 默认 `Python-urllib` UA，代码默认 `Emir-Eins-QQBot/1.0` |
 | `QQ_BOT_GROUP_CONTEXT` | 群聊上下文缓冲开关（默认 `1`）；`0` 关闭 |
 | `QQ_BOT_GROUP_CONTEXT_MAX` / `_MINUTES` / `_CHARS` | 最近条数 / 分钟数 / 注入字数上限（线上 60 / 120 / 4000） |
@@ -113,7 +117,8 @@
 
 | 指令 | 模块 | 说明 |
 |---|---|---|
-| 直接说话 / 群 @ | `bot.py` + `persona.py` + `kb.py` | 人格聊天，带本地知识库检索、看图（视觉模型）、联网搜索、群聊上下文缓冲 |
+| 直接说话 / 群 @ | `bot.py` + `persona.py` + `kb.py` | 人格聊天，带本地知识库检索、看图（视觉模型）、联网搜索、群聊上下文缓冲、黑话/印象 |
+| `/叫我`、`/黑话`、`/印象` | `memory_store.py` + `learning.py` | 称呼/黑话/人物印象；管理员可触发自动学习 |
 | `/help`、`/help r6` | `bot.py` + `help_image.py` | 主帮助只列常用；`HELP_TOPICS` 放详细用法（r6/图库/公告/名片） |
 | `/今日运势`、`/运势` | `fortune.py` | 本地黄历 + 确定性抽签（同人同天固定），**必须带斜杠** |
 | `/r6`、`/彩六`、`/r6绑定`、`/r6网站` | `r6stats.py` / `r6_card.py` / `r6_bind.py` | 见 §6 |
@@ -240,6 +245,8 @@ python3 -c "import kb; print(kb.search('今日运势'))"
 | `群聊上下文：开（最近 30 条 / 30 分钟）` | 缓冲已启用；关闭时显示「关」 |
 | `[人格] 分条回复 2 段` | 长回复被拆成多条；条间有短暂停顿，`msg_seq` 自动递增 |
 | `[随机接话] group=... p=...` | 群友随机接话命中（只会在概率 >0 时出现）；带群冷却 |
+| `[学习] 黑话 N 条 / 人物印象 N 人` | 自动学习结果；手动触发是 `/黑话 学`、`/印象 学` |
+| `[记忆] 已注入 ...` | 本轮带入了称呼/印象/黑话，可用 `/印象`、`/黑话` 查 |
 | `摘要: [QQ小程序]…` | **看图的卡片描述**，不是公告抓取（别误判） |
 | `处理群全量指令失败: 消息被去重` | **msg_seq 没递增**（见 §7.2） |
 
@@ -388,6 +395,16 @@ $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($py))
 - **使用边界**：Go 面向 coding agent，QQ 闲聊属非编码流量；异常时先切回
   Qwen / DeepSeek 官方 API。切换/回滚步骤见
   `docs/changes/2026-10-26-opencode-go.md`。
+
+### 7.16 官方群成员列表拿不到（11253）
+- **现象**：想直接拉群昵称/QQ 昵称，`GET /v2/groups/{group_openid}/members`
+  返回 `{"message":"应用无接口访问权限","code":11253}`。
+- **根因**：该接口是**内邀白名单**能力，不是所有机器人都有。
+- **修法**：先读原始 payload 的 `author.username`（QQ 昵称）和 `card`（群昵称，若有）；
+  拿不到就回退 openid 后 6 位。需要更完整的群昵称时，再考虑 SnowLuma 的
+  `get_group_member_list`（`nickname` + `card`）做消息关联映射；**不要抓备注名**。
+- **防回归**：`group_context` 的新消息会写 `display_name`；旧消息留空仍显示
+  `用户xxxxxx`，属正常。
 
 ## 8. 待办 / 观察项
 

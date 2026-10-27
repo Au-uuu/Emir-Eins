@@ -347,6 +347,27 @@ async def describe(
     )
 
 
+async def raw_complete(
+    system_prompt: str, user_text: str, session: str = "memory-learn"
+) -> str | None:
+    """中性调用：不带角色卡，给黑话/印象提取用（JSON 输出，低温度）。"""
+    if not system_prompt or not (user_text or "").strip():
+        return None
+    key = text_key()
+    if not key:
+        return None
+    return await _request_with_retry(
+        system_prompt,
+        key,
+        [],
+        user_text,
+        None,
+        None,
+        session,
+        temperature=0.2,
+    )
+
+
 def _user_content(
     text: str,
     images: list[tuple[str, bytes]],
@@ -386,6 +407,7 @@ def _request_sync(
     images: list[tuple[str, bytes]] | None = None,
     video_url: str | None = None,
     session: str = "",
+    temperature: float = 0.8,
 ) -> str | None:
     has_media = bool(images) or bool(video_url)
     messages = [{"role": "system", "content": prompt}]
@@ -397,7 +419,7 @@ def _request_sync(
     payload = {
         "model": vl_model() if has_media else text_model(),
         "messages": messages,
-        "temperature": 0.8,
+        "temperature": temperature,
         "max_tokens": max_tokens(),
     }
     # 智谱 GLM-4.6V 系列的思考模式开关（留空则不带该字段，用厂商默认）
@@ -465,7 +487,9 @@ def _request_sync(
     return reply or None
 
 
-async def _request_with_retry(*args, attempts: int = 3, delay: float = 1.2) -> str | None:
+async def _request_with_retry(
+    *args, attempts: int = 3, delay: float = 1.2, **kwargs
+) -> str | None:
     """
     在线程池里跑 `_request_sync`，对可重试错误（429/5xx）做有限重试。
 
@@ -474,7 +498,7 @@ async def _request_with_retry(*args, attempts: int = 3, delay: float = 1.2) -> s
     """
     for i in range(attempts):
         try:
-            return await asyncio.to_thread(_request_sync, *args)
+            return await asyncio.to_thread(_request_sync, *args, **kwargs)
         except _Retryable as exc:
             if i < attempts - 1:
                 await asyncio.sleep(delay * (i + 1))

@@ -30,6 +30,8 @@ import fortune
 import group_context
 import help_image
 import kb
+import learning
+import memory_store
 import names
 import notices
 import persona
@@ -103,6 +105,14 @@ def _env_prob(name: str, default: float = 0.0) -> float:
 RANDOM_REPLY_P = _env_prob("QQ_BOT_RANDOM_REPLY", 0.0)
 RANDOM_REPLY_COOLDOWN = max(
     0.0, float(os.getenv("QQ_BOT_RANDOM_REPLY_COOLDOWN", "300") or 0)
+)
+
+# 黑话/人物印象自动学习：每 N 分钟跑一轮（0 = 关闭）；每轮最多看几个群。
+MEMORY_LEARN_MINUTES = max(
+    0.0, float(os.getenv("QQ_BOT_MEMORY_LEARN_MINUTES", "0") or 0)
+)
+MEMORY_LEARN_MAX_GROUPS = max(
+    1, min(20, int(os.getenv("QQ_BOT_MEMORY_LEARN_MAX_GROUPS", "5") or 5))
 )
 
 # 只发了图片时写进上下文的占位文本。
@@ -259,6 +269,20 @@ if group_context.enabled():
 else:
     log.info("群聊上下文：关（QQ_BOT_GROUP_CONTEXT=0）")
 
+# 黑话 / 人物印象 / 称呼（按群隔离，data/memory.db）
+memory = memory_store.MemoryStore()
+if memory_store.enabled():
+    if MEMORY_LEARN_MINUTES > 0:
+        log.info(
+            "记忆：开（黑话/印象；自动学习每 %.0f 分钟，最多 %d 群）",
+            MEMORY_LEARN_MINUTES,
+            MEMORY_LEARN_MAX_GROUPS,
+        )
+    else:
+        log.info("记忆：开（黑话/印象；自动学习关）")
+else:
+    log.info("记忆：关（QQ_BOT_MEMORY=0）")
+
 # 群友随机接话：默认 0（完全关闭），线上调到 0.02~0.05 才有“偶尔插一句”的感觉
 if RANDOM_REPLY_P > 0:
     log.info(
@@ -338,6 +362,10 @@ HELP_TEXT = (
     "　　　看图：单聊直接发图，群里 @ 我发图，能看懂图说话（动图看前中后三帧）\n"
     "　　　闲聊发的图片只用来回复，不会被收藏进图库\n"
     "\n"
+    "【记忆】/叫我 名字　让本机记住你的称呼\n"
+    "　　　/黑话 [词]　查本群黑话　/黑话 添加 词 解释（管理员）\n"
+    "　　　/印象　看本机对你的印象\n"
+    "\n"
     "【收藏】/添加 关键词…　引用一张图片后回复；同消息附图须带「/」\n"
     "【批量】/批量添加 关键词　一次最多 5 张，把消息里的图片入库\n"
     "【删除】/删除 图库名 [私有/公开/全部]　先「引用一张图片」再回复；默认全部\n"
@@ -370,6 +398,11 @@ ADMIN_HELP_TEXT = (
     "　/私有 图库名 群openid　（私聊）对指定群设私有\n"
     "　/公开 图库名 群openid　（私聊）对指定群取消私有\n"
     "　/查询标识　查看自己的 openid 与当前群 openid\n"
+    "　/黑话 学　从最近群聊自动提取黑话\n"
+    "　/黑话 删除 词　删除黑话\n"
+    "　/印象 记 内容　手写一条对自己的印象\n"
+    "　/印象 学　从最近群聊自动总结人物印象\n"
+    "　/印象 清　清空本群所有印象\n"
     "　/取消关联 关键词　解关联；删除仅剩的最后一个词\n"
     "　/管理员 <口令>　（私聊）登记管理员\n"
     "\n" + HELP_TEXT
@@ -485,6 +518,11 @@ PUBLIC_RE = re.compile(r"^/公开\s*(.*)$", re.DOTALL)
 # 查询自己的 openid / 当前群 openid。故意用较长的指令名，避免被普通用户随手使用。
 # 不进普通帮助，只在「管理员私聊帮助」里出现。
 WHOAMI_RE = re.compile(r"^/查询标识\b\s*(.*)$", re.DOTALL)
+
+# 记忆：称呼 / 黑话 / 印象（都要求带斜杠，避免和普通聊天混淆）
+CALL_ME_RE = re.compile(r"^/叫我\s+(.{1,16})$", re.DOTALL)
+SLANG_RE = re.compile(r"^/黑话(?:\s+(.*))?$", re.DOTALL)
+IMPRESSION_RE = re.compile(r"^/印象(?:\s+(.*))?$", re.DOTALL)
 
 # 管理员删除某图库层：`/删除图库 <图库名> <群openid|公开>`
 DELETE_GALLERY_RE = re.compile(r"^/删除图库\s*(.*)$", re.DOTALL)
@@ -2536,6 +2574,7 @@ async def persona_reply(message, scope: str, content: str) -> None:
             model_text = websearch.wrap(summary) + model_text
     # 群聊背景：把最近没 @ 机器人的群消息也喂给模型（只作背景，不主动回复）。
     # 排除当前这条（正文已单独传了），避免同一句话出现两次。
+    ctx = ""
     if scope.startswith("group:"):
         gid = scope.split(":", 1)[1]
         ctx = await group_ctx.render(
@@ -2544,9 +2583,23 @@ async def persona_reply(message, scope: str, content: str) -> None:
         if ctx:
             model_text = ctx + model_text
             log.info("[群聊上下文] 已注入 %d 字 scope=%s", len(ctx), scope)
-        speaker = author_display_name(message)
-        if speaker:
-            model_text = f"（发言人：{speaker}）\n" + model_text
+    # 黑话/印象/称呼：只注入当前发言人 + 当前内容里出现的词，不整本塞入
+    openid = author_openid(message)
+    try:
+        alias = await memory.get_alias(scope, openid)
+    except Exception:  # noqa: BLE001
+        alias = ""
+    speaker = alias or author_display_name(message)
+    try:
+        mem_block = await memory.render(scope, openid, content, ctx)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[记忆] 读取失败，跳过注入：%s", exc)
+        mem_block = ""
+    if mem_block:
+        model_text = mem_block + model_text
+        log.info("[记忆] 已注入 %d 字 scope=%s", len(mem_block), scope)
+    if speaker and scope.startswith("group:"):
+        model_text = f"（发言人：{speaker}）\n" + model_text
     # 离线打标线索（Camie）：已收录角色的特征→标签映射，帮模型报出角色名
     hints = await tagger_hints(images) if images else ""
 
@@ -2746,6 +2799,143 @@ async def do_r6(message, api, scope: str, scene_id: str, text: str) -> None:
     await message.reply(content=r6stats.format_reply(data))
 
 
+async def do_call_me(message, scope: str, text: str) -> None:
+    match = CALL_ME_RE.match(text)
+    alias = (match.group(1) if match else "").strip()
+    if not alias:
+        await message.reply(content="用法：/叫我 小明（1~16 字）")
+        return
+    await memory.set_alias(scope, author_openid(message), alias)
+    await message.reply(content=f"好，本机记住了，{alias}。")
+
+
+async def do_slang(message, scope: str, text: str) -> None:
+    match = SLANG_RE.match(text)
+    arg = ((match.group(1) if match else "") or "").strip()
+    admin = await store.is_admin(author_openid(message))
+
+    if not arg:
+        rows = await memory.list_slang(scope, 30)
+        if not rows:
+            await message.reply(
+                content="本群还没记黑话。管理员可以：/黑话 添加 yyds 永远的神"
+            )
+            return
+        lines = [f"{r['term']}={r['meaning']}" for r in rows]
+        await message.reply(content="本群黑话：\n" + "\n".join(lines))
+        return
+
+    if arg in ("学", "学习"):
+        if not scope.startswith("group:"):
+            await message.reply(content="只在群里学黑话。")
+            return
+        if not admin:
+            await message.reply(content="只有管理员能让本机学黑话。")
+            return
+        gid = scope.split(":", 1)[1]
+        added = await learning.learn_slang(group_ctx, memory, gid, limit=40)
+        if added:
+            body = "、".join(f"{x['term']}={x['meaning']}" for x in added)
+            await message.reply(content=f"学到了：\n{body}")
+        else:
+            await message.reply(content="这轮没学到新的黑话（上下文不够明确）。")
+        return
+
+    if arg.startswith("添加 "):
+        if not admin:
+            await message.reply(content="只有管理员能添加黑话。")
+            return
+        rest = arg[3:].strip()
+        parts = rest.split(maxsplit=1)
+        if len(parts) != 2:
+            await message.reply(content="用法：/黑话 添加 词 解释")
+            return
+        term, meaning = parts[0].strip(), parts[1].strip()
+        if len(term) < 2 or len(meaning) < 2:
+            await message.reply(content="词和解释都至少 2 个字。")
+            return
+        ok = await memory.add_slang(scope, term, meaning, "manual", 1.0)
+        await message.reply(
+            content=f"记下了：{term}={meaning}" if ok else "没记下（自动条目不能覆盖手写条目）。"
+        )
+        return
+
+    if arg.startswith("删除 "):
+        if not admin:
+            await message.reply(content="只有管理员能删除黑话。")
+            return
+        term = arg[3:].strip()
+        ok = await memory.delete_slang(scope, term)
+        await message.reply(content=f"删掉了：{term}" if ok else f"没找到：{term}")
+        return
+
+    if arg.startswith("查 "):
+        arg = arg[2:].strip()
+    row = await memory.get_slang(scope, arg)
+    if not row:
+        await message.reply(content=f"本群没记过「{arg}」。")
+        return
+    tag = "手写" if row.get("source") == "manual" else "自动"
+    await message.reply(content=f"{arg}：{row['meaning']}（{tag}）")
+
+
+async def do_impression(message, scope: str, text: str) -> None:
+    match = IMPRESSION_RE.match(text)
+    arg = ((match.group(1) if match else "") or "").strip()
+    openid = author_openid(message)
+    admin = await store.is_admin(openid)
+
+    if not arg:
+        alias = await memory.get_alias(scope, openid)
+        note = await memory.get_impression(scope, openid)
+        if not alias and not note:
+            await message.reply(content="本机还没记住你。可以 /叫我 小明 先登记称呼。")
+            return
+        lines = []
+        if alias:
+            lines.append(f"称呼：{alias}")
+        if note:
+            lines.append(f"印象：{note}")
+        await message.reply(content="\n".join(lines))
+        return
+
+    if arg in ("学", "学习"):
+        if not scope.startswith("group:"):
+            await message.reply(content="只在群里学人物印象。")
+            return
+        if not admin:
+            await message.reply(content="只有管理员能让本机学人物印象。")
+            return
+        gid = scope.split(":", 1)[1]
+        n = await learning.learn_impressions(group_ctx, memory, gid)
+        await message.reply(content=f"更新了 {n} 个人的印象。" if n else "这轮没学到新印象。")
+        return
+
+    if arg.startswith("记 "):
+        if not admin:
+            await message.reply(content="只有管理员能写印象。")
+            return
+        note = arg[2:].strip()
+        if len(note) < 2:
+            await message.reply(content="用法：/印象 记 说话直，常聊终末地")
+            return
+        await memory.set_impression(scope, openid, note, "manual")
+        await message.reply(content="记下了。")
+        return
+
+    if arg in ("清", "清除"):
+        if not admin:
+            await message.reply(content="只有管理员能清空印象。")
+            return
+        n = await memory.clear_impressions(scope)
+        await message.reply(content=f"清掉了 {n} 条印象。")
+        return
+
+    await message.reply(
+        content="用法：/印象　/印象 记 <内容>　/印象 学（管理员）"
+    )
+
+
 async def handle_command(message, api, scope: str, scene_id: str, content: str) -> bool:
     """
     处理指令。返回 True 表示已回复，False 表示不是指令。
@@ -2776,6 +2966,19 @@ async def handle_command(message, api, scope: str, scene_id: str, content: str) 
 
     if cmd in ("/ping", "/在线", "在线"):
         await message.reply(content="pong 🏓")
+        return True
+
+    # 记忆：称呼 / 黑话 / 印象
+    if CALL_ME_RE.match(text):
+        await do_call_me(message, scope, text)
+        return True
+
+    if SLANG_RE.match(text):
+        await do_slang(message, scope, text)
+        return True
+
+    if IMPRESSION_RE.match(text):
+        await do_impression(message, scope, text)
         return True
 
     # /今日运势、/运势 —— 本地黄历 + 抽签（同一人同一天固定）
@@ -2896,6 +3099,7 @@ class MyClient(botpy.Client):
         self._news_task: asyncio.Task | None = None
         self._notice_task: asyncio.Task | None = None
         self._r6_warm_task: asyncio.Task | None = None
+        self._memory_task: asyncio.Task | None = None
 
     async def on_ready(self):
         log.info("机器人「%s」已上线", self.robot.name)
@@ -2916,6 +3120,15 @@ class MyClient(botpy.Client):
         if self._notice_task is None or self._notice_task.done():
             self._notice_task = asyncio.create_task(
                 notices.poll_loop(self.api, store, push_store)
+            )
+        # 黑话/人物印象自动学习（默认关闭；线上 .env 配 120 分钟）
+        if MEMORY_LEARN_MINUTES > 0 and (
+            self._memory_task is None or self._memory_task.done()
+        ):
+            self._memory_task = asyncio.create_task(
+                learning.poll_loop(
+                    group_ctx, memory, MEMORY_LEARN_MINUTES, MEMORY_LEARN_MAX_GROUPS
+                )
             )
         # R6 段位表预热（后台线程，不挡上线）：不预热的话，第一个来查 R6 的人
         # 要额外等 2-3 秒去拉 /ranks（每个进程只拉一次）。

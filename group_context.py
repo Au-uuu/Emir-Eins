@@ -176,6 +176,20 @@ class GroupContextStore:
     async def count(self, group_openid: str) -> int:
         return await asyncio.to_thread(self._count_sync, group_openid)
 
+    async def recent(
+        self, group_openid: str, limit: int = 60, since_ts: float = 0.0
+    ) -> list[dict]:
+        """取最近消息（旧→新），供自动学习/调试；不排除任何 msg_id。"""
+        if not group_openid:
+            return []
+        return await asyncio.to_thread(
+            self._recent_sync, group_openid, limit, since_ts
+        )
+
+    async def active_groups(self, minutes: float = 180.0) -> list[str]:
+        """最近 N 分钟有消息的群（自动学习用）。"""
+        return await asyncio.to_thread(self._active_groups_sync, minutes)
+
     # ---------------- 同步实现 ----------------
 
     def _remember_sync(
@@ -250,6 +264,39 @@ class GroupContextStore:
             return ""
         lines.reverse()  # 旧 → 新
         return _HEADER + "\n" + "\n".join(lines) + "\n" + _FOOTER + "\n"
+
+    def _recent_sync(
+        self, group_openid: str, limit: int, since_ts: float
+    ) -> list[dict]:
+        cutoff = time.time() - self.ttl_seconds
+        since = max(cutoff, float(since_ts or 0.0))
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT openid, display_name, content, ts FROM group_messages "
+                "WHERE group_openid = ? AND ts >= ? "
+                "ORDER BY id DESC LIMIT ?",
+                (group_openid, since, max(1, min(200, int(limit)))),
+            ).fetchall()
+        return [
+            {
+                "openid": r["openid"] or "",
+                "display_name": r["display_name"] or "",
+                "content": r["content"] or "",
+                "ts": float(r["ts"]),
+            }
+            for r in reversed(rows)
+        ]
+
+    def _active_groups_sync(self, minutes: float) -> list[str]:
+        cutoff = time.time() - max(1.0, float(minutes)) * 60.0
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT group_openid, COUNT(*) AS n FROM group_messages "
+                "WHERE ts >= ? GROUP BY group_openid HAVING n >= 3 "
+                "ORDER BY n DESC",
+                (cutoff,),
+            ).fetchall()
+        return [r["group_openid"] for r in rows]
 
     def _clear_sync(self, group_openid: str) -> int:
         with self._connect() as conn:
