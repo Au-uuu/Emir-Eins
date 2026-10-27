@@ -72,6 +72,7 @@
 | 2026-10-26 | 新增 **[环境与错题本](ENV-AND-PITFALLS.md)**：线上环境/服务/部署、`data/` 状态文件、R6 字段口径与额度、KB 门槛、公告配额、排查手册 + 14 条踩坑记录 | [env-and-pitfalls](ENV-AND-PITFALLS.md) |
 | 2026-10-26 | 人格聊天切 OpenCode Go / DeepSeek V4.1 Flash（文本+识图）；补自定义 UA、`x-opencode-session`、用量日志；长人设单阶段看图会误判，改两阶段 | [opencode-go](changes/2026-10-26-opencode-go.md) |
 | 2026-10-26 | 群聊上下文缓冲：群里没 @ 机器人的消息也记最近 30 条/30 分钟，被 @ 时作为背景注入人格提示词 | [group-context](changes/2026-10-26-group-context.md) |
+| 2026-10-27 | 活人感：角色卡“标签是口癖不是格式”+ 回复延迟 0.5~1.8s + 长回复拆 2 条（msg_seq 递增） | [human-feel](changes/2026-10-27-human-feel.md) |
 
 ## 约定
 

@@ -15,6 +15,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 TMP = tempfile.mkdtemp(prefix="qqbot_groupctx_")
 os.environ["QQ_BOT_GROUP_CONTEXT"] = "1"
 os.environ["QQ_BOT_GROUP_CONTEXT_DB"] = os.path.join(TMP, "gc.db")
+os.environ["QQ_BOT_CHAT_DELAY_MIN"] = "0"
+os.environ["QQ_BOT_CHAT_DELAY_MAX"] = "0"
+os.environ["QQ_BOT_CHAT_SPLIT"] = "0"
 os.environ["QQ_BOT_GROUP_CONTEXT_MAX"] = "5"
 os.environ["QQ_BOT_GROUP_CONTEXT_MINUTES"] = "30"
 os.environ["QQ_BOT_GROUP_CONTEXT_CHARS"] = "800"

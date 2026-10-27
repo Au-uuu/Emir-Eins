@@ -295,6 +295,17 @@ OpenAI 兼容端点。
 - 调参：`QQ_BOT_GROUP_CONTEXT_MAX` / `QQ_BOT_GROUP_CONTEXT_MINUTES` /
   `QQ_BOT_GROUP_CONTEXT_CHARS`；删 `data/group_context.db` 只丢缓冲，不影响其它数据。
 
+### 活人感（延迟 / 分条）
+
+- 人格回复前会随机等 0.5~1.8 秒（`QQ_BOT_CHAT_DELAY_MIN/MAX`），模拟“看完再打字”；
+  设为 `0`/`0` 可关闭。
+- 超过 `QQ_BOT_CHAT_SPLIT_CHARS`（默认 80 字）的回复会拆成最多
+  `QQ_BOT_CHAT_SPLIT_MAX`（默认 2）条短消息发送，条间再停 0.35~0.9 秒；
+  `QQ_BOT_CHAT_SPLIT=0` 关闭（默认关，线上已开）。
+- 拆条用 `msg_seq` 递增，不会触发 QQ 的 40054005 去重；代码块和 URL 不拆。
+- 角色卡已改成“标签是口癖，不是每句格式”：群聊 1~2 句、尽量 60 字内，
+  日常闲聊可以完全不用【标签】，只在报告/演算/慌乱/毒舌时用。
+
 ### 看图（可选）
 
 `qwen-flash-character` 是纯文本模型，带图消息会改调视觉模型

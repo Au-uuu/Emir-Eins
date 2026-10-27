@@ -15,6 +15,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import random
 import re
 import tempfile
 import time
@@ -69,6 +70,18 @@ IMAGE_COOLDOWN = float(os.getenv("QQ_BOT_IMAGE_COOLDOWN", "3"))
 
 # 人格聊天：同一会话的最小回复间隔（秒），防止连点烧 token；0 = 不限流
 CHAT_COOLDOWN = float(os.getenv("QQ_BOT_CHAT_COOLDOWN", "5") or 0)
+
+# 活人感：回复前随机延迟（秒），模拟「看完再打字」。两个都为 0 时关闭。
+CHAT_DELAY_MIN = max(0.0, float(os.getenv("QQ_BOT_CHAT_DELAY_MIN", "0.5") or 0))
+CHAT_DELAY_MAX = max(CHAT_DELAY_MIN, float(os.getenv("QQ_BOT_CHAT_DELAY_MAX", "1.8") or 0))
+
+# 活人感：长回复拆成 2 条（默认关；线上可在 .env 开）。拆条用 msg_seq 递增，
+# 否则同一条消息的第二条会被 QQ 以 40054005 去重拒掉。
+CHAT_SPLIT = (os.getenv("QQ_BOT_CHAT_SPLIT", "0") or "0").strip().lower() in (
+    "1", "true", "on", "yes"
+)
+CHAT_SPLIT_CHARS = max(30, int(os.getenv("QQ_BOT_CHAT_SPLIT_CHARS", "80") or 80))
+CHAT_SPLIT_MAX = max(2, min(4, int(os.getenv("QQ_BOT_CHAT_SPLIT_MAX", "2") or 2)))
 
 # 只发了图片时写进上下文的占位文本。
 # 开了看图时它同时作为发给视觉模型的文字部分；历史里也只存文本，
@@ -2323,6 +2336,73 @@ def group_preamble(message, tag: str, dedup_prefix: str) -> str | None:
     return normalize_incoming(message.content)
 
 
+_SENTENCE_END = "。！？!?…\n"
+_SOFT_END = "，,；;、 "
+
+
+def _find_split_cut(text: str, want: int) -> int:
+    """在 text 里找一个接近 want 的断点（优先句末，其次逗号，最后硬切）。"""
+    n = len(text)
+    if n <= 1:
+        return n
+    want = max(1, min(want, n - 1))
+    low = max(6, int(want * 0.55))
+    high = min(n - 1, max(want + 4, int(want * 1.35)))
+    window = text[:high]
+    cut = -1
+    # 句末标点：取窗口内最靠后的一个（最接近目标长度）
+    for i in range(low, len(window)):
+        if window[i] in _SENTENCE_END:
+            cut = i + 1
+    if cut > 0:
+        return cut
+    # 逗号/顿号/空格
+    for i in range(low, len(window)):
+        if window[i] in _SOFT_END:
+            cut = i + 1
+    if cut > 0:
+        return cut
+    # 硬切：英文尽量落在空格
+    cut = want
+    for i in range(max(1, want - 8), min(n - 1, want + 8)):
+        if text[i] == " ":
+            cut = i + 1
+            break
+    return max(1, min(cut, n - 1))
+
+
+def split_reply(
+    text: str, max_parts: int | None = None, target: int | None = None
+) -> list[str]:
+    """把长回复拆成 2~N 条短消息；短回复/代码/URL 不拆。"""
+    text = (text or "").strip()
+    if not text:
+        return []
+    max_parts = max(2, min(4, int(max_parts or CHAT_SPLIT_MAX)))
+    target = max(30, int(target or CHAT_SPLIT_CHARS))
+    if len(text) <= target:
+        return [text]
+    # 代码块、URL、长链接不拆，避免把可复制的信息切断
+    if "```" in text or "http://" in text or "https://" in text:
+        return [text]
+    total = len(text)
+    n = min(max_parts, max(2, (total + target - 1) // target))
+    parts: list[str] = []
+    rest = text
+    while rest and len(parts) < n - 1:
+        remaining_parts = n - len(parts)
+        want = max(1, len(rest) // remaining_parts)
+        cut = _find_split_cut(rest, want)
+        head, rest = rest[:cut].strip(), rest[cut:].strip()
+        if head:
+            parts.append(head)
+        if not rest:
+            break
+    if rest:
+        parts.append(rest)
+    return [p for p in parts if p] or [text]
+
+
 async def persona_reply(message, scope: str, content: str) -> None:
     """
     人格聊天：把非指令文本交给角色模型，并维护该会话的上下文。
@@ -2429,8 +2509,22 @@ async def persona_reply(message, scope: str, content: str) -> None:
         await chat.append(scope, content, None)
         return
 
+    # 活人感：先「看完再打字」的随机延迟，再把长回复拆成短条。
+    # 只作用于人格回复，指令/公告/图片等链路不受影响。
+    if CHAT_DELAY_MAX > 0:
+        delay = random.uniform(CHAT_DELAY_MIN, CHAT_DELAY_MAX)
+        if len(reply) > 100:
+            delay += random.uniform(0.2, 0.8)
+        await asyncio.sleep(delay)
+
+    parts = split_reply(reply) if CHAT_SPLIT else [reply]
+    if len(parts) > 1:
+        log.info("[人格] 分条回复 %d 段", len(parts))
     try:
-        await message.reply(content=reply)
+        for i, part in enumerate(parts):
+            if i:
+                await asyncio.sleep(random.uniform(0.35, 0.9))
+            await message.reply(content=part, msg_seq=next_msg_seq(message.id))
     except Exception as exc:  # noqa: BLE001
         log.exception("发送人格回复失败: %s", exc)
         return
