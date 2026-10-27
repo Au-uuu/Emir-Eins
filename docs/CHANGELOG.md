@@ -78,6 +78,7 @@
 | 2026-10-27 | 黑话/人物印象/称呼：`/叫我`、`/黑话`、`/印象` + 每 120 分钟自动学习（按群隔离、自动不覆盖手写） | [memory-auto-learn](changes/2026-10-27-memory-auto-learn.md) |
 | 2026-10-27 | 长期记忆摘要（每 50 条压 3~5 条事实、最近 20 条原文）+ 视频每 15s 抽帧至少 9 帧 + `/用量` + 自然语言只提示指令 | [summary-video-usage](changes/2026-10-27-summary-video-usage.md) |
 | 2026-10-27 | 爱因味回补（每 1~2 条一处机娘味）+ 群聊场景提示禁止叫主人 + 联网搜索改 `forced_search`/扩触发词/图片题不搜 | [persona-websearch](changes/2026-10-27-persona-websearch.md) |
+| 2026-10-27 | 新梗 KB：`疯狂新妻祀` / `疯狂星期祀` / `小葱（祀）`；梗类/看不懂触发联网兜底 | [persona-websearch](changes/2026-10-27-persona-websearch.md) |
 
 ## 约定
 
