@@ -91,13 +91,17 @@ class ChatStore:
 
     def __init__(
         self,
-        db_path: str = DB_PATH,
+        db_path: str | None = None,
         max_messages: int | None = None,
         memory_minutes: float | None = None,
         recent_messages: int | None = None,
         summary_every: int | None = None,
     ):
-        self.db_path = db_path
+        self.db_path = (
+            db_path
+            or (os.getenv("QQ_BOT_CHAT_DB", "") or "").strip()
+            or DB_PATH
+        )
         self.max_messages = max(2, int(max_messages or _env_max_messages()))
         self.ttl_seconds = max(
             0.0, float(memory_minutes or _env_memory_minutes()) * 60.0
@@ -114,7 +118,7 @@ class ChatStore:
                 "QQ_BOT_CHAT_SUMMARY_EVERY", DEFAULT_SUMMARY_EVERY, 10, 500
             ))),
         )
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
 

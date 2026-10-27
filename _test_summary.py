@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 TMP = tempfile.mkdtemp(prefix="qqbot_summary_")
 os.environ["QQ_BOT_MEMORY"] = "0"
 os.environ["QQ_BOT_GROUP_CONTEXT"] = "0"
+os.environ["QQ_BOT_CHAT_DB"] = os.path.join(TMP, "bot-chat.db")
 os.environ["QQ_BOT_CHAT_DELAY_MIN"] = "0"
 os.environ["QQ_BOT_CHAT_DELAY_MAX"] = "0"
 os.environ["QQ_BOT_CHAT_SPLIT"] = "0"
