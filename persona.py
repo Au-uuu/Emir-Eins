@@ -64,6 +64,8 @@ import os
 import urllib.error
 import urllib.request
 
+import usage_store
+
 log = logging.getLogger("qqbot.persona")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -293,7 +295,9 @@ async def generate(history: list[dict], text: str, session: str = "") -> str | N
     key = text_key()
     if not prompt or not key:
         return None
-    return await _request_with_retry(prompt, key, history, text, None, None, session)
+    return await _request_with_retry(
+        prompt, key, history, text, None, None, session, kind="text"
+    )
 
 
 async def generate_vision(
@@ -315,7 +319,8 @@ async def generate_vision(
     if not prompt or not key:
         return None
     return await _request_with_retry(
-        prompt, key, history, (text or "").strip(), list(images), None, session
+        prompt, key, history, (text or "").strip(), list(images), None,
+        session, kind="vision"
     )
 
 
@@ -344,13 +349,17 @@ async def describe(
         list(images),
         video_url,
         session,
+        kind="vision",
     )
 
 
 async def raw_complete(
-    system_prompt: str, user_text: str, session: str = "memory-learn"
+    system_prompt: str,
+    user_text: str,
+    session: str = "memory-learn",
+    kind: str = "learn",
 ) -> str | None:
-    """中性调用：不带角色卡，给黑话/印象提取用（JSON 输出，低温度）。"""
+    """中性调用：不带角色卡，给黑话/印象/摘要提取用（JSON 输出，低温度）。"""
     if not system_prompt or not (user_text or "").strip():
         return None
     key = text_key()
@@ -365,6 +374,7 @@ async def raw_complete(
         None,
         session,
         temperature=0.2,
+        kind=kind,
     )
 
 
@@ -408,6 +418,7 @@ def _request_sync(
     video_url: str | None = None,
     session: str = "",
     temperature: float = 0.8,
+    kind: str = "text",
 ) -> str | None:
     has_media = bool(images) or bool(video_url)
     messages = [{"role": "system", "content": prompt}]
@@ -463,6 +474,10 @@ def _request_sync(
     cache = (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
     reasoning = (oc.get("tokens") or {}).get("reasoning", 0)
     if usage:
+        try:
+            usage_store.record(session or "unknown", payload.get("model", ""), kind, usage)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[用量] 记录异常：%s", exc)
         # 一行成本/用量，方便观察 OpenCode Go 的峰谷价与实际消耗
         log.info(
             "[模型] %s in=%s out=%s cache=%s reasoning=%s cost=%s",

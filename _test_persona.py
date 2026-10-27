@@ -24,6 +24,7 @@ os.environ["QQ_BOT_GROUP_CONTEXT"] = "0"
 os.environ["QQ_BOT_GROUP_CONTEXT_DB"] = os.path.join(tempfile.mkdtemp(), "gc.db")
 os.environ["QQ_BOT_MEMORY"] = "0"
 os.environ["QQ_BOT_MEMORY_DB"] = os.path.join(tempfile.mkdtemp(), "mem.db")
+os.environ["QQ_BOT_USAGE"] = "0"
 # 测试不要真的等延迟/拆条；相关行为由 _test_chat_style.py 单独测。
 os.environ["QQ_BOT_CHAT_DELAY_MIN"] = "0"
 os.environ["QQ_BOT_CHAT_DELAY_MAX"] = "0"

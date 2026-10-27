@@ -14,6 +14,7 @@ os.environ["QQ_BOT_GROUP_CONTEXT"] = "0"
 os.environ["QQ_BOT_GROUP_CONTEXT_DB"] = os.path.join(tempfile.mkdtemp(), "gc.db")
 os.environ["QQ_BOT_MEMORY"] = "0"
 os.environ["QQ_BOT_MEMORY_DB"] = os.path.join(tempfile.mkdtemp(), "mem.db")
+os.environ["QQ_BOT_USAGE"] = "0"
 os.environ["QQ_BOT_CHAT_DELAY_MIN"] = "0"
 os.environ["QQ_BOT_CHAT_DELAY_MAX"] = "0"
 os.environ["QQ_BOT_CHAT_SPLIT"] = "1"

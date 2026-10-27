@@ -38,6 +38,8 @@ import persona
 import r6stats
 import sensitive
 import tagger
+import usage_store
+import video_frames
 import watchdog
 import websearch
 from chat_store import ChatStore
@@ -283,6 +285,9 @@ if memory_store.enabled():
 else:
     log.info("记忆：关（QQ_BOT_MEMORY=0）")
 
+# 模型用量账本（/用量 汇总）
+usage = usage_store.UsageStore()
+
 # 群友随机接话：默认 0（完全关闭），线上调到 0.02~0.05 才有“偶尔插一句”的感觉
 if RANDOM_REPLY_P > 0:
     log.info(
@@ -403,6 +408,7 @@ ADMIN_HELP_TEXT = (
     "　/印象 记 内容　手写一条对自己的印象\n"
     "　/印象 学　从最近群聊自动总结人物印象\n"
     "　/印象 清　清空本群所有印象\n"
+    "　/用量 [天数]　模型调用/费用汇总（默认今天）\n"
     "　/取消关联 关键词　解关联；删除仅剩的最后一个词\n"
     "　/管理员 <口令>　（私聊）登记管理员\n"
     "\n" + HELP_TEXT
@@ -523,6 +529,7 @@ WHOAMI_RE = re.compile(r"^/查询标识\b\s*(.*)$", re.DOTALL)
 CALL_ME_RE = re.compile(r"^/叫我\s+(.{1,16})$", re.DOTALL)
 SLANG_RE = re.compile(r"^/黑话(?:\s+(.*))?$", re.DOTALL)
 IMPRESSION_RE = re.compile(r"^/印象(?:\s+(.*))?$", re.DOTALL)
+USAGE_RE = re.compile(r"^/用量(?:\s+(\d{1,3}))?$", re.DOTALL)
 
 # 管理员删除某图库层：`/删除图库 <图库名> <群openid|公开>`
 DELETE_GALLERY_RE = re.compile(r"^/删除图库\s*(.*)$", re.DOTALL)
@@ -2512,6 +2519,75 @@ def split_reply(
     return [p for p in parts if p] or [text]
 
 
+SUMMARY_PROMPT = (
+    "你是对话记忆整理助手。把下面这段对话压缩成 3~5 条事实，保留："
+    "用户身份/偏好/约定、重要事件、未完成事项、关系变化；"
+    "不要编造，不要保留寒暄。每条一行，不超过 40 字。"
+    "若给了【已有摘要】，把新对话合并进去，最终仍是 3~5 条。"
+    "只输出条目，不要解释。"
+)
+
+_summary_tasks: set[str] = set()
+
+
+async def _summarize_scope(scope: str) -> None:
+    try:
+        old, covered, msgs = await chat.summary_input(scope)
+        if not msgs:
+            return
+        lines = []
+        for m in msgs:
+            role = "本机" if m.get("role") == "assistant" else "对方"
+            text = " ".join((m.get("content") or "").split())[:200]
+            if text:
+                lines.append(f"{role}: {text}")
+        transcript = "\n".join(lines)[-5000:]
+        data = (f"【已有摘要】\n{old}\n\n【新对话】\n{transcript}" if old else transcript)
+        raw = await persona.raw_complete(
+            SUMMARY_PROMPT, data, "memory-summary", kind="summary"
+        )
+        if not raw:
+            return
+        facts = []
+        for line in raw.splitlines():
+            line = re.sub(r"^[\s\-*•\d.、]+", "", line).strip()
+            if 2 <= len(line) <= 80:
+                facts.append(line)
+        facts = facts[:5]
+        if not facts:
+            return
+        await chat.set_summary(scope, "\n".join(facts), covered)
+        log.info("[记忆] 摘要已更新 scope=%s：%d 条事实", scope, len(facts))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[记忆] 摘要失败 scope=%s：%s", scope, exc)
+
+
+async def maybe_summarize(scope: str) -> None:
+    """每 N 条触发一次早期对话摘要；后台跑，不阻塞回复。"""
+    if scope in _summary_tasks:
+        return
+    try:
+        if not await chat.should_summarize(scope):
+            return
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[记忆] 检查摘要失败：%s", exc)
+        return
+    _summary_tasks.add(scope)
+
+    async def _run() -> None:
+        try:
+            await _summarize_scope(scope)
+        finally:
+            _summary_tasks.discard(scope)
+
+    asyncio.create_task(_run())
+
+
+async def append_chat(scope: str, user_text: str, reply_text: str | None) -> None:
+    await chat.append(scope, user_text, reply_text)
+    await maybe_summarize(scope)
+
+
 async def persona_reply(message, scope: str, content: str) -> None:
     """
     人格聊天：把非指令文本交给角色模型，并维护该会话的上下文。
@@ -2535,13 +2611,27 @@ async def persona_reply(message, scope: str, content: str) -> None:
 
     images = await collect_vision_images(message)
     video_url = collect_video_url(message)
+    video_frames_used = False
+    if video_url and video_frames.enabled():
+        if video_frames.mode() == "frames":
+            frames = await asyncio.to_thread(video_frames.frames_from_url, video_url)
+            if frames:
+                images = images + frames
+                video_frames_used = True
+                log.info("[视频] 已抽帧 %d 张，交给视觉模型", len(frames))
+            else:
+                log.warning("[视频] 抽帧失败，按无视频处理")
+            # DS 不支持 video_url；即使抽帧失败也不要把它塞给视觉链路
+            video_url = ""
+        elif video_frames.mode() == "off":
+            video_url = ""
     media = bool(images or video_url)
     image_only = content == IMAGE_ONLY_PLACEHOLDER
 
     if image_only and not media:
         # 人格未启用 / 没开看图 / 图下载失败都会落到这里——维持 2026-09-28
         # 的行为契约：不回复，只把占位写进上下文，让紧接着的下一句接得上
-        await chat.append(scope, content, None)
+        await append_chat(scope, content, None)
         log.info("[人格] 只发了图片（图不可用）：已记入上下文，不回复")
         return
 
@@ -2551,10 +2641,15 @@ async def persona_reply(message, scope: str, content: str) -> None:
     if not chat_cooldown.allow(scope):
         log.info("[人格] 触发限流，已跳过: scope=%s", scope)
         if image_only:
-            await chat.append(scope, content, None)
+            await append_chat(scope, content, None)
         return
 
     history = await chat.history(scope)
+    summary = await chat.summary(scope)
+    if summary:
+        history = [
+            {"role": "system", "content": "【长期记忆摘要】\n" + summary}
+        ] + history
     # 引用提问（「引用一张图/一段话/一份聊天记录 + 这是什么」）：
     # 把被引用内容的平台展开文本拼进本轮输入，模型才有东西可看可答。
     # 只拼当前轮，历史里仍存原文，不膨胀记忆。
@@ -2600,8 +2695,9 @@ async def persona_reply(message, scope: str, content: str) -> None:
         log.info("[记忆] 已注入 %d 字 scope=%s", len(mem_block), scope)
     if speaker and scope.startswith("group:"):
         model_text = f"（发言人：{speaker}）\n" + model_text
-    # 离线打标线索（Camie）：已收录角色的特征→标签映射，帮模型报出角色名
-    hints = await tagger_hints(images) if images else ""
+    # 离线打标线索（Camie）：已收录角色的特征→标签映射，帮模型报出角色名。
+    # 视频抽帧不做打标（几十帧逐个打太慢，且视频重点通常是动作/场景）。
+    hints = await tagger_hints(images) if images and not video_frames_used else ""
 
     if media and persona.describe_mode():
         # 两阶段：视觉模型（GLM）先客观描述，再交给文本链路（qwen）转人设。
@@ -2625,7 +2721,7 @@ async def persona_reply(message, scope: str, content: str) -> None:
     if not reply:
         log.info("[人格] 本轮无回复: scope=%s", scope)
         if image_only:
-            await chat.append(scope, content, None)
+            await append_chat(scope, content, None)
         return
 
     hit = sensitive.filter.hit(reply)
@@ -2633,7 +2729,7 @@ async def persona_reply(message, scope: str, content: str) -> None:
         # 把回复开头一起打出来：「怎么不回复」类问题没有原文根本没法排查
         #（2026-10-07 实锤：【抗议】标签整段回复被杀，日志只有个词）
         log.warning("[人格] 模型回复命中敏感词「%s」，已丢弃：%s", hit, reply[:60])
-        await chat.append(scope, content, None)
+        await append_chat(scope, content, None)
         return
 
     # 活人感：先「看完再打字」的随机延迟，再把长回复拆成短条。
@@ -2656,7 +2752,7 @@ async def persona_reply(message, scope: str, content: str) -> None:
         log.exception("发送人格回复失败: %s", exc)
         return
 
-    await chat.append(scope, content, reply)
+    await append_chat(scope, content, reply)
     log.info("[人格] 已回复 scope=%s: %s", scope, reply[:40])
 
 
@@ -2936,6 +3032,46 @@ async def do_impression(message, scope: str, text: str) -> None:
     )
 
 
+async def do_usage(message, text: str) -> None:
+    match = USAGE_RE.match(text)
+    try:
+        days = int((match.group(1) if match else "") or 1)
+    except ValueError:
+        days = 1
+    days = max(1, min(30, days))
+    if not await store.is_admin(author_openid(message)):
+        await message.reply(content="只有管理员能看用量。")
+        return
+    data = await usage.summary(days)
+    total = data.get("total") or {}
+    calls = int(total.get("calls") or 0)
+    prompt = int(total.get("prompt") or 0)
+    completion = int(total.get("completion") or 0)
+    reasoning = int(total.get("reasoning") or 0)
+    cached = int(total.get("cached") or 0)
+    cost = float(total.get("cost") or 0.0)
+    lines = [
+        f"用量（最近 {days} 天）",
+        f"调用 {calls} 次 · 输入 {prompt:,} · 输出 {completion:,} · "
+        f"推理 {reasoning:,} · 缓存 {cached:,}",
+        f"费用 ${cost:.4f}（约 ¥{cost * 7.2:.2f}）",
+    ]
+    kind_names = {"text": "对话", "vision": "看图", "learn": "学习", "summary": "摘要"}
+    kinds = [
+        f"{kind_names.get(k.get('kind'), k.get('kind'))} {k.get('calls', 0)}"
+        for k in (data.get("kinds") or [])
+    ]
+    if kinds:
+        lines.append("分项：" + " / ".join(kinds))
+    scopes = []
+    for s in (data.get("scopes") or [])[:5]:
+        name = (s.get("scope") or "").replace("group:", "群 ").replace("c2c:", "单聊 ")
+        scopes.append(f"{name[:18]} ${float(s.get('cost') or 0):.4f}")
+    if scopes:
+        lines.append("Top：" + " / ".join(scopes))
+    await message.reply(content="\n".join(lines))
+
+
 async def handle_command(message, api, scope: str, scene_id: str, content: str) -> bool:
     """
     处理指令。返回 True 表示已回复，False 表示不是指令。
@@ -2979,6 +3115,10 @@ async def handle_command(message, api, scope: str, scene_id: str, content: str) 
 
     if IMPRESSION_RE.match(text):
         await do_impression(message, scope, text)
+        return True
+
+    if USAGE_RE.match(text):
+        await do_usage(message, text)
         return True
 
     # /今日运势、/运势 —— 本地黄历 + 抽签（同一人同一天固定）

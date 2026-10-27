@@ -64,6 +64,7 @@
 | `data/chat.db` | 人格聊天记忆（**按场景**：`c2c:<openid>` / `group:<openid>`，默认 100 条） | 可删（丢记忆） |
 | `data/group_context.db` | 群聊上下文缓冲（最近 60 条 / 120 分钟；只存文字与媒体占位） | 可删（丢群聊背景） |
 | `data/memory.db` | 黑话 / 人物印象 / 称呼（按群隔离；自动条目可删） | 可删（丢记忆） |
+| `data/usage.db` | 模型用量账本（token/费用，`/用量` 用） | 可删（丢统计） |
 | `data/push.db` | `push_groups`（群×游戏开关）+ `seen_news`（已见公告去重） | 可删（会重推/丢开关） |
 | `data/r6bind.db` | R6 绑定（openid → 平台/昵称/profile_id） | 可删（丢绑定） |
 | `data/r6_ranks.json` | Arenyze v7 段位表缓存（7 天 TTL） | 可删（会自动重拉） |
@@ -94,6 +95,9 @@
 | `QQ_BOT_GROUP_CONTEXT` | 群聊上下文缓冲开关（默认 `1`）；`0` 关闭 |
 | `QQ_BOT_GROUP_CONTEXT_MAX` / `_MINUTES` / `_CHARS` | 最近条数 / 分钟数 / 注入字数上限（线上 60 / 120 / 4000） |
 | `QQ_BOT_CHAT_MEMORY` / `_MINUTES` | 人格记忆：每会话条数 / 存活分钟（线上 200 / 60） |
+| `QQ_BOT_CHAT_RECENT` / `_SUMMARY_EVERY` | 最近保留原文条数 / 多少条触发摘要（线上 20 / 50） |
+| `QQ_BOT_VIDEO_MODE` | 视频处理：`frames`（默认）/ `url` / `off`；`FRAME_INTERVAL` 15s、`MIN_FRAMES` 9、`MAX_FRAMES` 30 |
+| `QQ_BOT_USAGE` | 用量账本开关（默认 1）；`/用量 [天数]` 查看 |
 | `QQ_BOT_R6_KEY` / `QQ_BOT_R6_KEY_EXPIRE` | Arenyze key 与到期日（到期前管理员会被私聊提醒） |
 | `QQ_BOT_R6_TIMEOUT` | R6 接口超时秒数（默认 25） |
 | `QQ_BOT_NEWS_POLL_MINUTES` | 公告轮询间隔（`0` = 关闭主动推送） |
@@ -119,6 +123,7 @@
 |---|---|---|
 | 直接说话 / 群 @ | `bot.py` + `persona.py` + `kb.py` | 人格聊天，带本地知识库检索、看图（视觉模型）、联网搜索、群聊上下文缓冲、黑话/印象 |
 | `/叫我`、`/黑话`、`/印象` | `memory_store.py` + `learning.py` | 称呼/黑话/人物印象；管理员可触发自动学习 |
+| `/用量 [天数]` | `usage_store.py` | 模型调用/token/费用汇总（管理员） |
 | `/help`、`/help r6` | `bot.py` + `help_image.py` | 主帮助只列常用；`HELP_TOPICS` 放详细用法（r6/图库/公告/名片） |
 | `/今日运势`、`/运势` | `fortune.py` | 本地黄历 + 确定性抽签（同人同天固定），**必须带斜杠** |
 | `/r6`、`/彩六`、`/r6绑定`、`/r6网站` | `r6stats.py` / `r6_card.py` / `r6_bind.py` | 见 §6 |
@@ -247,6 +252,9 @@ python3 -c "import kb; print(kb.search('今日运势'))"
 | `[随机接话] group=... p=...` | 群友随机接话命中（只会在概率 >0 时出现）；带群冷却 |
 | `[学习] 黑话 N 条 / 人物印象 N 人` | 自动学习结果；手动触发是 `/黑话 学`、`/印象 学` |
 | `[记忆] 已注入 ...` | 本轮带入了称呼/印象/黑话，可用 `/印象`、`/黑话` 查 |
+| `[记忆] 摘要已更新 scope=...` | 每 50 条把早期对话压成 3~5 条事实 |
+| `[视频] 抽帧 N 张` | 视频每 15 秒抽帧、至少 9 帧；失败按无视频处理 |
+| `[用量] 记录失败` | 账本写入异常（不影响聊天） |
 | `摘要: [QQ小程序]…` | **看图的卡片描述**，不是公告抓取（别误判） |
 | `处理群全量指令失败: 消息被去重` | **msg_seq 没递增**（见 §7.2） |
 
