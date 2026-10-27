@@ -373,7 +373,24 @@ QQ_BOT_RANDOM_REPLY_COOLDOWN=300  # 同群两次随机接话至少隔 5 分钟
 - **完全被动**：只在收到消息时回复，永远不会主动推送。
 - **按会话限流**：同一会话两条回复至少间隔 `QQ_BOT_CHAT_COOLDOWN` 秒（默认 5）。
 - **会话隔离记忆**：存在 `data/chat.db`，scope 为 `group:<群openid>` / `c2c:<用户openid>`，
-  每个会话最多保留最近 `QQ_BOT_CHAT_MEMORY` 条（默认 100）。群与群、群与单聊**互不串台**。
+  最近 `QQ_BOT_CHAT_RECENT`（默认 20）条保留原文；每 `QQ_BOT_CHAT_SUMMARY_EVERY`
+  （默认 50）条把更早的对话压成 3~5 条事实摘要。
+
+### 联网搜索（两步式）
+
+- 线上 `QQ_BOT_WEBSEARCH=1`；只对**时效/事实类**问题触发，不每条都搜；
+- 检索模型是 `qwen-flash` + `enable_search` + **`forced_search`**（强制真搜，避免拿旧知识硬答）；
+- 拿到 200~300 字事实摘要后，再交给 DS 按人设回答；不把检索原文塞进人设；
+- 带图/视频的「这是谁」不搜（图和打标/KB 更直接）；
+- 自我介绍类（「你是谁」）不搜；
+- 触发词默认含：新闻/更新/发布/新角色/卡池/强度/配队/攻略/剧情/是谁/多少钱等；
+  可用 `QQ_BOT_WEBSEARCH_TRIGGERS` 覆盖；
+- `QQ_BOT_WEBSEARCH_FRESHNESS=7|30|180|365` 可限制只搜最近 N 天；
+- 搜索失败静默，不影响聊天。
+
+> **DS 本身没有内置联网搜索**：聊天/识图走 DS V4.1 Flash，检索仍是 Qwen 的
+> `enable_search`；两条链路分开，各干各的。
+
 
 ### 敏感词过滤
 

@@ -2645,6 +2645,15 @@ async def persona_reply(message, scope: str, content: str) -> None:
         return
 
     history = await chat.history(scope)
+    # 场景提示：让模型知道这是群聊还是单聊。否则群聊里容易把随便一个群友叫「主人」。
+    if scope.startswith("group:"):
+        scene_note = (
+            "【当前场景】群聊。对方是未知个体，不是主人；"
+            "禁止称呼「主人」，用「你」或已登记的称呼，恋爱脑对未知个体关闭。"
+        )
+    else:
+        scene_note = "【当前场景】单聊。对方是主人。"
+    history = [{"role": "system", "content": scene_note}] + history
     summary = await chat.summary(scope)
     if summary:
         history = [
@@ -2662,8 +2671,14 @@ async def persona_reply(message, scope: str, content: str) -> None:
         kb_ctx = kb.context(content)
         if kb_ctx:
             model_text = kb_ctx + model_text
-    # 联网搜索（两步式）：命中时效性提问才搜；只把「事实摘要」注入，不塞检索原文
-    if content and content != IMAGE_ONLY_PLACEHOLDER and websearch.should_search(content):
+    # 联网搜索（两步式）：命中时效性/事实类提问才搜；只把「事实摘要」注入，不塞检索原文。
+    # 带图/视频的「这是谁」不搜：图和打标/KB 更直接，搜一句「这是谁」纯浪费。
+    if (
+        content
+        and content != IMAGE_ONLY_PLACEHOLDER
+        and not media
+        and websearch.should_search(content)
+    ):
         summary = await asyncio.to_thread(websearch.search, content)
         if summary:
             model_text = websearch.wrap(summary) + model_text

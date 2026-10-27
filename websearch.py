@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import urllib.request
+from datetime import date
 
 log = logging.getLogger("qqbot.websearch")
 
@@ -22,8 +23,9 @@ DEFAULT_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completion
 
 # 给「检索助手」的指令：只要事实、别客套、别演角色
 _SEARCH_PROMPT = (
-    "你是检索助手。用联网搜索，就用户的问题给出准确、最新的事实要点，200字以内；"
-    "只给事实，不做评价、不扮演任何角色、不要客套。"
+    "你是检索助手。当前日期是 {today}。用联网搜索，就用户的问题给出准确、最新的事实要点，"
+    "200字以内；只给事实，不做评价、不扮演任何角色、不要客套。"
+    "如果搜不到可靠信息，就直说「未查到」，不要用旧知识硬答。"
 )
 
 # 只在「像在问实时信息」时才搜，避免每条都联网（一次约 6.5K 输入 token + 可能有的搜索费）。
@@ -32,8 +34,13 @@ _TRIGGER_DEFAULT = (
     r"新闻|头条|动态|进展|消息|情报|新番|新作|新游|"
     r"什么时候|哪天|几号|几点|多少钱|价格|股价|汇率|天气|比分|"
     r"出了|上线|发布|更新|新版本|版本更新|联动|活动|开服|停服|维护|"
-    r"结果(是|如何|出来)|发生(了|什么)"
+    r"结果(是|如何|出来)|发生(了|什么)|"
+    r"新干员|新角色|新皮肤|卡池|复刻|值得抽|强度|配队|攻略|剧情|结局|"
+    r"是谁|叫什么|哪一位|哪个干员|哪个角色|多少抽"
 )
+
+# 自我介绍类问题不触发联网，避免「你是谁」被当成「查一下谁」
+_SELF_RE = re.compile(r"你是谁|本机是谁|你叫什么|你是什么|介绍一下你")
 
 
 def _env(name: str, default: str = "") -> str:
@@ -49,9 +56,13 @@ def _trigger_re() -> re.Pattern:
 
 
 def should_search(text: str) -> bool:
-    """启用了、且文本命中时效性触发词，才值得联网。"""
+    """启用了、且文本命中时效性/事实类触发词，才值得联网。"""
     text = (text or "").strip()
-    return bool(text) and enabled() and bool(_trigger_re().search(text))
+    if not text or not enabled():
+        return False
+    if _SELF_RE.search(text):
+        return False
+    return bool(_trigger_re().search(text))
 
 
 def _key() -> str:
@@ -81,13 +92,24 @@ def search(query: str) -> str:
     key = _key()
     if not key:
         return ""
+    search_options = {"forced_search": True, "search_strategy": "turbo"}
+    try:
+        fresh = int(_env("QQ_BOT_WEBSEARCH_FRESHNESS") or 0)
+    except ValueError:
+        fresh = 0
+    if fresh in (7, 30, 180, 365):
+        search_options["freshness"] = fresh
     payload = {
         "model": _model(),
         "messages": [
-            {"role": "system", "content": _SEARCH_PROMPT},
+            {
+                "role": "system",
+                "content": _SEARCH_PROMPT.format(today=date.today().isoformat()),
+            },
             {"role": "user", "content": query},
         ],
         "enable_search": True,
+        "search_options": search_options,
         "temperature": 0.2,
         "max_tokens": 350,
     }

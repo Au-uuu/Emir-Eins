@@ -104,7 +104,7 @@
 | `QQ_BOT_NEWS_KEYWORDS` | 公告推送关键词（`\|` 分隔） |
 | `QQ_BOT_NEWS_DAILY_LIMIT` | 每群每日推送上限（防刷屏保险丝） |
 | `QQ_BOT_KB_DIR` / `QQ_BOT_KB_MIN_SCORE` / `QQ_BOT_KB_TOP` | 知识库目录 / 召回分数门槛 / 条数 |
-| `QQ_BOT_WEBSEARCH` / `QQ_BOT_WEBSEARCH_MODEL` | 联网搜索开关与模型 |
+| `QQ_BOT_WEBSEARCH` / `_MODEL` / `_FRESHNESS` | 联网搜索开关/模型/只搜最近 N 天；检索走 Qwen `enable_search` + `forced_search`，DS 本身无内置搜索 |
 | ~~`QQ_BOT_UBI_*`~~ | 育碧官方 API 的账号密码（**已删除**，见 §6.6） |
 
 ### 1.6 改完代码的固定动作

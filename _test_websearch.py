@@ -61,6 +61,9 @@ check("命中「今天/新闻」触发", websearch.should_search("今天有什�
 check("命中「最新」触发", websearch.should_search("看看最新消息") is True)
 check("命中「多少钱」触发", websearch.should_search("这个多少钱") is True)
 check("命中「发布」触发", websearch.should_search("新版本发布了吗") is True)
+check("新角色/卡池触发", websearch.should_search("这次新角色是谁，卡池值得抽吗") is True)
+check("自我介绍不触发", websearch.should_search("你是谁") is False)
+check("本机是谁不触发", websearch.should_search("本机是谁") is False)
 check("纯时间词闲聊不触发", websearch.should_search("你好呀，今天心情如何") is False)
 check("「今天好累」不触发", websearch.should_search("今天好累啊") is False)
 check("空串不触发", websearch.should_search("") is False)
@@ -69,6 +72,7 @@ websearch.urllib.request.urlopen = _ok_urlopen
 out = websearch.search("今天有什么新闻")
 check("解析出摘要", out == "检索摘要ABC", out)
 check("请求带 enable_search", _last.get("body", {}).get("enable_search") is True)
+check("请求强制联网", _last.get("body", {}).get("search_options", {}).get("forced_search") is True)
 check("请求模型默认 qwen-flash", _last.get("body", {}).get("model") == "qwen-flash")
 
 wrapped = websearch.wrap(out)
