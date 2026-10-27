@@ -74,6 +74,7 @@
 | 2026-10-26 | 群聊上下文缓冲：群里没 @ 机器人的消息也记最近 30 条/30 分钟，被 @ 时作为背景注入人格提示词 | [group-context](changes/2026-10-26-group-context.md) |
 | 2026-10-27 | 活人感：角色卡“标签是口癖不是格式”+ 回复延迟 0.5~1.8s + 长回复拆 2 条（msg_seq 递增） | [human-feel](changes/2026-10-27-human-feel.md) |
 | 2026-10-27 | 群友随机接话：全量模式下按概率接一句，默认 0，支持 `0.03`/`3%`，每群冷却 300s | [random-reply](changes/2026-10-27-random-reply.md) |
+| 2026-10-27 | 上下文加长（记忆 200/60、群背景 60/120/4000）+ 机娘味回补 + 群昵称/QQ 昵称字段（官方成员列表无权限，先读 payload） | [context-flavor-nickname](changes/2026-10-27-context-flavor-nickname.md) |
 
 ## 约定
 

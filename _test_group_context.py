@@ -71,6 +71,10 @@ async def main() -> int:
     check("带发言人尾号", "用户000003" in text, text)
     check("带头部/尾部说明", "群聊最近消息" in text and "下面是需要你回应" in text)
 
+    await store.remember("G1", "m8", "openid000008", "带昵称", "小明")
+    text2 = await store.render("G1", exclude_id="m9")
+    check("优先显示群昵称/QQ昵称", "小明: 带昵称" in text2, text2)
+
     print("[2] 去重与群隔离")
     await store.remember("G1", "m6", "openid000006", "第6条（重复投递）")
     check("同一 msg_id 不重复（且只留 5 条）", (await store.count("G1")) == 5, await store.count("G1"))
@@ -94,6 +98,20 @@ async def main() -> int:
     await old.remember("G4", "new1", "openidN", "刚刚")
     check("新消息仍在", "刚刚" in await old.render("G4"))
     check("clear 清空", (await old.clear("G4")) == 1 and (await old.count("G4")) == 0)
+
+    print("[4b] 旧库迁移补 display_name 列")
+    old_path = os.path.join(TMP, "legacy.db")
+    with sqlite3.connect(old_path) as conn:
+        conn.execute(
+            "CREATE TABLE group_messages ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, group_openid TEXT NOT NULL, "
+            "msg_id TEXT NOT NULL, openid TEXT NOT NULL DEFAULT '', "
+            "content TEXT NOT NULL, ts REAL NOT NULL, "
+            "UNIQUE(group_openid, msg_id))"
+        )
+    legacy = group_context.GroupContextStore(db_path=old_path, max_messages=5, minutes=30, max_chars=500)
+    await legacy.remember("G5", "l1", "openidL", "旧库消息", "旧昵称")
+    check("旧库能写入并能读到昵称", "旧昵称: 旧库消息" in (await legacy.render("G5")), await legacy.render("G5"))
 
     print("[5] 注入人格链路（只群聊，不重复当前消息）")
     seen = {}

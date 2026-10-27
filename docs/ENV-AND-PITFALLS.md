@@ -88,7 +88,8 @@
 | `QQ_BOT_RANDOM_REPLY_COOLDOWN` | 同一群两次随机接话的最小间隔秒数（默认 300） |
 | `QQ_BOT_TEXT_UA` | 可选；OpenCode Go 的 Cloudflare 会 403 默认 `Python-urllib` UA，代码默认 `Emir-Eins-QQBot/1.0` |
 | `QQ_BOT_GROUP_CONTEXT` | 群聊上下文缓冲开关（默认 `1`）；`0` 关闭 |
-| `QQ_BOT_GROUP_CONTEXT_MAX` / `_MINUTES` / `_CHARS` | 最近条数 / 分钟数 / 注入字数上限（默认 30 / 30 / 2000） |
+| `QQ_BOT_GROUP_CONTEXT_MAX` / `_MINUTES` / `_CHARS` | 最近条数 / 分钟数 / 注入字数上限（线上 60 / 120 / 4000） |
+| `QQ_BOT_CHAT_MEMORY` / `_MINUTES` | 人格记忆：每会话条数 / 存活分钟（线上 200 / 60） |
 | `QQ_BOT_R6_KEY` / `QQ_BOT_R6_KEY_EXPIRE` | Arenyze key 与到期日（到期前管理员会被私聊提醒） |
 | `QQ_BOT_R6_TIMEOUT` | R6 接口超时秒数（默认 25） |
 | `QQ_BOT_NEWS_POLL_MINUTES` | 公告轮询间隔（`0` = 关闭主动推送） |

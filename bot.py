@@ -772,6 +772,25 @@ def media_placeholder(message) -> str:
     return ""
 
 
+def author_display_name(message) -> str:
+    """
+    群消息发送者的显示名：优先群昵称（card），其次 QQ 昵称（username）。
+
+    官方 Bot 的 `GroupMessage.author` 模型只暴露 member_openid，但原始 payload
+    的 `author` 里通常还有 `username`（部分版本带 `card`）。这里只读这两个，
+    **不读备注名**；拿不到就返回空串，调用方回退到 openid 尾号。
+    """
+    raw = get_raw(message)
+    author = raw.get("author") if isinstance(raw, dict) else None
+    if not isinstance(author, dict):
+        return ""
+    for key in ("card", "member_name", "username", "nickname"):
+        value = str(author.get(key) or "").strip()
+        if value:
+            return value[:24]
+    return ""
+
+
 def quoted_content(message) -> str:
     """
     抽出「被引用消息」的平台展开文本（普通引用和合并转发卡片都适用）。
@@ -2525,6 +2544,9 @@ async def persona_reply(message, scope: str, content: str) -> None:
         if ctx:
             model_text = ctx + model_text
             log.info("[群聊上下文] 已注入 %d 字 scope=%s", len(ctx), scope)
+        speaker = author_display_name(message)
+        if speaker:
+            model_text = f"（发言人：{speaker}）\n" + model_text
     # 离线打标线索（Camie）：已收录角色的特征→标签映射，帮模型报出角色名
     hints = await tagger_hints(images) if images else ""
 
@@ -2928,6 +2950,7 @@ class MyClient(botpy.Client):
                         message.id,
                         author_openid(message),
                         media_placeholder(message) or "[图片]",
+                        author_display_name(message),
                     )
                     await persona_reply(
                         message, f"group:{message.group_openid}", IMAGE_ONLY_PLACEHOLDER
@@ -2942,7 +2965,11 @@ class MyClient(botpy.Client):
                 return
             # 非指令文本 → 先记进群聊缓冲，再走人格聊天（群里只在被 @ 时触发）
             await group_ctx.remember(
-                message.group_openid, message.id, author_openid(message), content
+                message.group_openid,
+                message.id,
+                author_openid(message),
+                content,
+                author_display_name(message),
             )
             await persona_reply(message, f"group:{message.group_openid}", content)
         except Exception as exc:  # noqa: BLE001
@@ -2970,6 +2997,7 @@ class MyClient(botpy.Client):
                         message.id,
                         author_openid(message),
                         media_placeholder(message) or "[图片]",
+                        author_display_name(message),
                     )
                     await persona_reply(
                         message, f"group:{message.group_openid}", IMAGE_ONLY_PLACEHOLDER
@@ -2985,6 +3013,7 @@ class MyClient(botpy.Client):
                         message.id,
                         author_openid(message),
                         ph,
+                        author_display_name(message),
                     )
             return
 
@@ -3019,7 +3048,11 @@ class MyClient(botpy.Client):
         # 非指令：先记进群聊缓冲（没 @ 机器人的也记），再决定要不要回应。
         # 命令不进来（上面 return 了），图片/视频在空正文分支已用占位记录。
         await group_ctx.remember(
-            message.group_openid, message.id, author_openid(message), content
+            message.group_openid,
+            message.id,
+            author_openid(message),
+            content,
+            author_display_name(message),
         )
 
         # 被 @ 且不是指令 → 人格聊天。

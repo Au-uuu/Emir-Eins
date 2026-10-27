@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS group_messages (
     group_openid  TEXT    NOT NULL,
     msg_id        TEXT    NOT NULL,
     openid        TEXT    NOT NULL DEFAULT '',
+    display_name  TEXT    NOT NULL DEFAULT '',
     content       TEXT    NOT NULL,
     ts            REAL    NOT NULL,
     UNIQUE(group_openid, msg_id)
@@ -124,13 +125,25 @@ class GroupContextStore:
         conn.row_factory = sqlite3.Row
         if not self._ready:
             conn.executescript(_SCHEMA)
+            # 旧库补列（群昵称/QQ 昵称）；新库建表时已带
+            cols = {row["name"] for row in conn.execute("PRAGMA table_info(group_messages)")}
+            if "display_name" not in cols:
+                conn.execute(
+                    "ALTER TABLE group_messages "
+                    "ADD COLUMN display_name TEXT NOT NULL DEFAULT ''"
+                )
             self._ready = True
         return conn
 
     # ---------------- 对外 ----------------
 
     async def remember(
-        self, group_openid: str, msg_id: str, openid: str, content: str
+        self,
+        group_openid: str,
+        msg_id: str,
+        openid: str,
+        content: str,
+        display_name: str = "",
     ) -> None:
         """记一条群消息。空内容/命令由调用方过滤，这里只做兜底。"""
         if not enabled() or not group_openid:
@@ -139,7 +152,12 @@ class GroupContextStore:
         if not text:
             return
         await asyncio.to_thread(
-            self._remember_sync, group_openid, msg_id, openid, text[:500]
+            self._remember_sync,
+            group_openid,
+            msg_id,
+            openid,
+            display_name,
+            text[:500],
         )
 
     async def render(
@@ -161,15 +179,28 @@ class GroupContextStore:
     # ---------------- 同步实现 ----------------
 
     def _remember_sync(
-        self, group_openid: str, msg_id: str, openid: str, content: str
+        self,
+        group_openid: str,
+        msg_id: str,
+        openid: str,
+        display_name: str,
+        content: str,
     ) -> None:
         now = time.time()
         mid = (msg_id or "").strip() or f"auto:{time.time_ns()}"
         with self._connect() as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO group_messages"
-                "(group_openid, msg_id, openid, content, ts) VALUES (?, ?, ?, ?, ?)",
-                (group_openid, mid, (openid or "").strip(), content, now),
+                "(group_openid, msg_id, openid, display_name, content, ts) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    group_openid,
+                    mid,
+                    (openid or "").strip(),
+                    (display_name or "").strip()[:24],
+                    content,
+                    now,
+                ),
             )
             conn.execute(
                 "DELETE FROM group_messages WHERE group_openid = ? AND ts < ?",
@@ -190,7 +221,7 @@ class GroupContextStore:
         cutoff = time.time() - self.ttl_seconds
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT msg_id, openid, content, ts FROM group_messages "
+                "SELECT msg_id, openid, display_name, content, ts FROM group_messages "
                 "WHERE group_openid = ? AND ts >= ? AND msg_id <> ? "
                 "ORDER BY id DESC LIMIT ?",
                 (group_openid, cutoff, exclude_id, take),
@@ -207,7 +238,8 @@ class GroupContextStore:
             if len(text) > MAX_LINE_CHARS:
                 text = text[:MAX_LINE_CHARS].rstrip() + "…"
             openid = row["openid"] or ""
-            who = f"用户{openid[-6:]}" if openid else "某群友"
+            display_name = (row["display_name"] or "").strip()
+            who = display_name or (f"用户{openid[-6:]}" if openid else "某群友")
             clock = time.strftime("%H:%M", time.localtime(row["ts"]))
             line = f"[{clock}] {who}: {text}"
             if lines and len(line) + 1 > budget:
