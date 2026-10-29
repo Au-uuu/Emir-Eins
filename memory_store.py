@@ -296,6 +296,59 @@ class MemoryStore:
             self._render_sync, scope, openid, text, context_text
         )
 
+    async def render_profiles(
+        self, scope: str, members: list[dict], limit: int = 5
+    ) -> str:
+        """
+        群友画像：给最近活跃成员拼一段「谁是谁、什么脾气」。
+
+        只输出有过的称呼/印象，没印象的人不硬编；随机接话时用它来决定
+        接谁的话、用什么口气。数据来自自动学习，`/印象` 也能人工修正。
+        """
+        if not enabled() or not members:
+            return ""
+        return await asyncio.to_thread(self._render_profiles_sync, scope, members, limit)
+
+    def _render_profiles_sync(
+        self, scope: str, members: list[dict], limit: int
+    ) -> str:
+        openids = [
+            (m.get("openid") or "").strip()
+            for m in members[: max(1, min(12, limit * 3))]
+            if (m.get("openid") or "").strip()
+        ]
+        if not openids:
+            return ""
+        marks = ",".join("?" for _ in openids)
+        with self._connect() as conn:
+            alias_rows = conn.execute(
+                f"SELECT openid, alias FROM aliases WHERE scope = ? AND openid IN ({marks})",
+                (scope, *openids),
+            ).fetchall()
+            imp_rows = conn.execute(
+                f"SELECT openid, note FROM impressions WHERE scope = ? AND openid IN ({marks})",
+                (scope, *openids),
+            ).fetchall()
+        aliases = {r["openid"]: (r["alias"] or "").strip() for r in alias_rows}
+        notes = {r["openid"]: (r["note"] or "").strip() for r in imp_rows}
+
+        lines: list[str] = []
+        for m in members:
+            oid = (m.get("openid") or "").strip()
+            if not oid:
+                continue
+            name = aliases.get(oid) or (m.get("name") or "").strip()
+            note = notes.get(oid, "")
+            if not note:
+                continue
+            who = name or "某个群友"
+            lines.append(f"{who}：{note}")
+            if len(lines) >= limit:
+                break
+        if not lines:
+            return ""
+        return "【群友画像】\n" + "\n".join(lines) + "\n"
+
     def _render_sync(
         self, scope: str, openid: str, text: str, context_text: str
     ) -> str:

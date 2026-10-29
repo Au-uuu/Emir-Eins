@@ -123,8 +123,8 @@ async def learn_impressions(
     mem: memory_store.MemoryStore,
     group_openid: str,
     limit: int = 80,
-    max_users: int = 3,
-    min_messages: int = 3,
+    max_users: int = 5,
+    min_messages: int = 2,
 ) -> int:
     rows = await gctx.recent(group_openid, limit=limit)
     if not rows:

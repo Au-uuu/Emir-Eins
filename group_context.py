@@ -186,6 +186,28 @@ class GroupContextStore:
             self._recent_sync, group_openid, limit, since_ts
         )
 
+    async def recent_members(
+        self, group_openid: str, limit: int = 80
+    ) -> list[dict]:
+        """
+        最近活跃成员（按发言条数降序），给「群友画像」注入用。
+
+        返回 [{"openid","name","count"}]；昵称取该成员最近一条的 display_name。
+        只读群聊缓冲，不额外建表。
+        """
+        rows = await self.recent(group_openid, limit=limit)
+        stats: dict[str, dict] = {}
+        for r in rows:
+            oid = (r.get("openid") or "").strip()
+            if not oid:
+                continue
+            item = stats.setdefault(oid, {"openid": oid, "name": "", "count": 0})
+            name = (r.get("display_name") or "").strip()
+            if name:
+                item["name"] = name[:24]
+            item["count"] += 1
+        return sorted(stats.values(), key=lambda x: x["count"], reverse=True)
+
     async def active_groups(self, minutes: float = 180.0) -> list[str]:
         """最近 N 分钟有消息的群（自动学习用）。"""
         return await asyncio.to_thread(self._active_groups_sync, minutes)

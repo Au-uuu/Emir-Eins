@@ -79,8 +79,8 @@ async def main() -> int:
     async def fake_handle_command(*args, **kwargs):
         return False
 
-    async def fake_persona_reply(message, scope, content):
-        captured.append((scope, content))
+    async def fake_persona_reply(message, scope, content, proactive=False):
+        captured.append((scope, content, proactive))
 
     orig_handle = bot.handle_command
     orig_persona = bot.persona_reply
@@ -93,7 +93,8 @@ async def main() -> int:
         client.api = None
         msg = FakeMessage("这句没人叫我", "RG4")
         await bot.MyClient.on_group_message_create(client, msg)
-        check("随机接话调用了 persona_reply", captured == [("group:RG4", "这句没人叫我")], captured)
+        check("随机接话会调用 persona_reply", len(captured) == 1 and captured[0][0] == "group:RG4", captured)
+        check("随机接话标记为主动", bool(captured) and captured[0][2] is True, captured)
 
         captured.clear()
         bot.RANDOM_REPLY_P = 0.0

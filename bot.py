@@ -2421,6 +2421,27 @@ _EVERYONE_MARKUP_RE = re.compile(
 )
 
 
+def mentions_others(message) -> bool:
+    """
+    这条消息是否 @ 了**别人**（不是本机）。
+
+    随机接话只该插「大家都能接」的话题，不该插两个人之间的点名对话。
+    mentions[] 里除本机外还有真实用户就返回 True；@全体成员不算「别人」，
+    由 mentions_everyone() 先行拦掉。
+    """
+    raw = get_raw(message)
+    for item in raw.get("mentions") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("is_you") or item.get("bot"):
+            continue
+        if str(item.get("scope") or "").strip().lower() == "all":
+            continue
+        if item.get("id") or item.get("member_openid"):
+            return True
+    return False
+
+
 def mentions_everyone(message) -> bool:
     """
     这条消息是否 **@ 了全体成员**。
@@ -2628,11 +2649,14 @@ async def append_chat(scope: str, user_text: str, reply_text: str | None) -> Non
     await maybe_summarize(scope)
 
 
-async def persona_reply(message, scope: str, content: str) -> None:
+async def persona_reply(
+    message, scope: str, content: str, proactive: bool = False
+) -> None:
     """
     人格聊天：把非指令文本交给角色模型，并维护该会话的上下文。
 
-    完全被动——只在收到消息时才会走到这里，永远不会主动推送。
+    默认被动——被 @ / 单聊才回。`proactive=True` 是群聊随机接话：本机自己
+    决定插一句，提示词会强调「先看群里在聊什么、别答非所问」，并注入群友画像。
     单聊「只发图片/视频」也走这里（content 传 IMAGE_ONLY_PLACEHOLDER）。
 
     默认：带图消息（含只发图）一次调用视觉模型，人设与纯文本链路共用同一张角色卡。
@@ -2735,6 +2759,18 @@ async def persona_reply(message, scope: str, content: str) -> None:
         if ctx:
             model_text = ctx + model_text
             log.info("[群聊上下文] 已注入 %d 字 scope=%s", len(ctx), scope)
+        # 随机接话：把最近活跃群友的画像带上，让本机知道接谁的话、用什么口气。
+        # 只给主动插话用；被 @ 时当前发言人信息已经够了，避免每轮白烧 token。
+        if proactive:
+            try:
+                members = await group_ctx.recent_members(gid, limit=80)
+                profiles = await memory.render_profiles(scope, members)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("[群友画像] 读取失败，跳过注入：%s", exc)
+                profiles = ""
+            if profiles:
+                model_text = profiles + model_text
+                log.info("[群友画像] 已注入 %d 字 scope=%s", len(profiles), scope)
     # 黑话/印象/称呼：只注入当前发言人 + 当前内容里出现的词，不整本塞入
     openid = author_openid(message)
     try:
@@ -2752,6 +2788,13 @@ async def persona_reply(message, scope: str, content: str) -> None:
         log.info("[记忆] 已注入 %d 字 scope=%s", len(mem_block), scope)
     if speaker and scope.startswith("group:"):
         model_text = f"（发言人：{speaker}）\n" + model_text
+    if proactive:
+        model_text = (
+            "【触发方式】本机是自己决定插一句，不是被点名。"
+            "先读群里最近在聊什么，顺着当前话题接一句；"
+            "不要答非所问，不要重复别人刚说过的话，也不要把整段群聊复述一遍。\n"
+            + model_text
+        )
     # 离线打标线索（Camie）：已收录角色的特征→标签映射，帮模型报出角色名。
     # 视频抽帧不做打标（几十帧逐个打太慢，且视频重点通常是动作/场景）。
     hints = await tagger_hints(images) if images and not video_frames_used else ""
@@ -3495,14 +3538,21 @@ class MyClient(botpy.Client):
                 log.exception("回复群全量消息失败: %s", exc)
             return
 
-        if should_random_reply(message.group_openid, content):
+        if mentions_others(message):
+            log.debug("[随机接话] 这条在 @ 别人，跳过")
+        elif should_random_reply(message.group_openid, content):
             log.info(
                 "[随机接话] group=%s p=%.1f%%: %s",
                 message.group_openid[:10],
                 RANDOM_REPLY_P * 100.0,
                 content[:30],
             )
-            await persona_reply(message, f"group:{message.group_openid}", content)
+            await persona_reply(
+                message,
+                f"group:{message.group_openid}",
+                content,
+                proactive=True,
+            )
 
     # 消息列表单聊
     async def on_c2c_message_create(self, message: C2CMessage):
