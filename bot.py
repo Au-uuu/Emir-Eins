@@ -3467,11 +3467,17 @@ class MyClient(botpy.Client):
         if content is None:
             return
 
-        # 管理员群：如果有因为没开主动发言而积压的用量日报，趁这次说话补发
-        if message.group_openid == usage_report.group_id():
-            await usage_report.flush_pending(message, next_msg_seq(message.id))
-
         mentions_me = mentioned_bot(message)
+
+        # 管理员群：如果有因为没开主动发言而积压的用量日报，趁普通聊天补发。
+        # 跳过指令和 @ 消息，避免和它们的回复抢 msg_seq。
+        if (
+            message.group_openid == usage_report.group_id()
+            and content
+            and not content.startswith("/")
+            and not mentions_me
+        ):
+            await usage_report.flush_pending(message, next_msg_seq(message.id))
 
         if not content:
             # 只 @ 了机器人、没写正文 → 与「群@」事件保持一致，给帮助；
