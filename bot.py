@@ -2860,7 +2860,7 @@ async def persona_reply(
     try:
         for i, part in enumerate(parts):
             if i:
-                await asyncio.sleep(random.uniform(0.35, 0.9))
+                await asyncio.sleep(random.uniform(0.2, 0.5))
             await message.reply(content=part, msg_seq=next_msg_seq(message.id))
     except Exception as exc:  # noqa: BLE001
         log.exception("发送人格回复失败: %s", exc)

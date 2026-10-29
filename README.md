@@ -310,7 +310,8 @@ OpenAI 兼容端点。
 
 ### 活人感（延迟 / 分条）
 
-- 人格回复前会随机等 0.5~1.8 秒（`QQ_BOT_CHAT_DELAY_MIN/MAX`），模拟“看完再打字”；
+- 人格回复前会随机等 0.3~1.0 秒（`QQ_BOT_CHAT_DELAY_MIN/MAX`），模拟“看完再打字”；
+- 文本默认关闭思考（`QQ_BOT_TEXT_THINKING=disabled`）：聊天不需要长篇推理，实测把常规回复从 7~8 秒降到 3 秒左右；复杂任务可改 `enabled`。
   设为 `0`/`0` 可关闭。
 - 超过 `QQ_BOT_CHAT_SPLIT_CHARS`（默认 80 字）的回复会拆成最多
   `QQ_BOT_CHAT_SPLIT_MAX`（默认 2）条短消息发送，条间再停 0.35~0.9 秒；

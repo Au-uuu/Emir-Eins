@@ -33,6 +33,7 @@ OpenAI 兼容接口，用标准库 `urllib` 就能调，**不引入新依赖**�
 | `QQ_BOT_VL_URL` | **视觉链路**独立的端点；留空则回退到 `QQ_BOT_QWEN_URL` |
 | `QQ_BOT_VL_IMAGE_FORMAT` | 图片来源格式：`data_uri`（默认，OpenAI/DashScope）或 `base64`（智谱裸 base64） |
 | `QQ_BOT_VL_THINKING` | 思考模式 `enabled`/`disabled`（智谱 GLM-4.6V 系列）；留空不带该字段 |
+| `QQ_BOT_TEXT_THINKING` | 文本链路思考模式：默认 `disabled`（聊天优先速度）；复杂任务可设 `enabled` |
 | `QQ_BOT_VL_DESCRIBE` | 两阶段看图：`1` = GLM 先客观描述、再由 qwen 转人设；留空/`0` = 单次调用（现状） |
 | `QQ_BOT_PERSONA_FILE` | 角色卡路径，默认 `persona/依蜜尔爱因.md` |
 | `QQ_BOT_CHAT_TIMEOUT` | 单次请求超时秒数，默认 20 |
@@ -61,6 +62,7 @@ import hashlib
 import json
 import logging
 import os
+import time
 import urllib.error
 import urllib.request
 
@@ -115,6 +117,17 @@ def vl_image_format() -> str:
 def vl_thinking() -> str:
     # 思考模式（智谱 GLM-4.6V 系列）：enabled/disabled；留空 = 不带该字段、用厂商默认
     return _env("QQ_BOT_VL_THINKING").lower()
+
+
+def text_thinking() -> str:
+    """
+    文本链路思考模式。
+
+    聊天要的是「看懂 → 接一句」，不需要长篇推理；DeepSeek 默认思考会先生成
+    几百到两千 reasoning token，实测把 2~4 秒拖到 5~30 秒，还会出现
+    max_tokens 被 reasoning 吃光、正文为空。默认 disabled，复杂任务可改 enabled。
+    """
+    return (_env("QQ_BOT_TEXT_THINKING") or "disabled").lower()
 
 
 _TRUTHY = {"1", "true", "on", "yes"}
@@ -436,9 +449,11 @@ def _request_sync(
         "temperature": temperature,
         "max_tokens": max_tokens(),
     }
-    # 智谱 GLM-4.6V 系列的思考模式开关（留空则不带该字段，用厂商默认）
-    if has_media and vl_thinking() in ("enabled", "disabled"):
-        payload["thinking"] = {"type": vl_thinking()}
+    # 思考模式：视觉沿用 VL 开关；文本默认 disabled（聊天优先速度）。
+    # 留空/厂商不认时不带该字段，避免把别的模型请求打坏。
+    thinking = vl_thinking() if has_media else text_thinking()
+    if thinking in ("enabled", "disabled"):
+        payload["thinking"] = {"type": thinking}
     url = vl_url() if has_media else text_url()
     req_timeout = vl_timeout(bool(video_url)) if has_media else timeout()
     headers = {
@@ -455,9 +470,11 @@ def _request_sync(
         data=json.dumps(payload).encode("utf-8"),
         headers=headers,
     )
+    started = time.time()
     try:
         with urllib.request.urlopen(req, timeout=req_timeout) as resp:
             data = json.loads(resp.read().decode("utf-8", "replace"))
+        elapsed = time.time() - started
     except urllib.error.HTTPError as exc:
         # 内容安全拦截通常也是 4xx，把响应体带出来便于排查（截断，避免刷屏）
         body = ""
@@ -483,13 +500,14 @@ def _request_sync(
             log.warning("[用量] 记录异常：%s", exc)
         # 一行成本/用量，方便观察 OpenCode Go 的峰谷价与实际消耗
         log.info(
-            "[模型] %s in=%s out=%s cache=%s reasoning=%s cost=%s",
+            "[模型] %s in=%s out=%s cache=%s reasoning=%s cost=%s elapsed=%.1fs",
             payload.get("model"),
             usage.get("prompt_tokens"),
             usage.get("completion_tokens"),
             cache,
             reasoning,
             oc.get("list_cost", "-"),
+            elapsed,
         )
     if not choices:
         log.warning("模型返回里没有 choices：%s", str(data)[:200])
