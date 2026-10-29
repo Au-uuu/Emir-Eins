@@ -98,7 +98,43 @@ Top：memory-learn $0.0349 / 单聊 68BC60AB1E $0.0024
 - 状态文件：`data/usage_report.json`；
 - 想手动看最近 N 天：管理员私聊 `/用量 [天数]`。
 
-## 6. 相关文件
+## 6. 能看到哪些群/群友信息
+
+### 群名称：可以
+
+`GET /v2/groups/{group_openid}/info` 会返回 `group_name`、
+`group_member_num`。2026-10-29 实测：
+
+| openid 前缀 | 群名 |
+|---|---|
+| `D604F254A4` | 白、_樛木、Auuuu |
+| `94C43E8EB4` | 邪恶煮汁 |
+| `5C04C69877` | r6养老选手休息室 |
+| `7AF61E9EA3` | 台院罗德岛 |
+
+### 群友名称：发过言的人可以
+
+- 消息 payload 的 `author.card`（群名片）优先，
+  次选 `author.username` / `nickname`；
+- 被 @ 的人可能在 `mentions[].username` 里带名字；
+- bot 把展示名存进 `group_context.db` 的 `display_name`，
+  用在群聊上下文、群友画像和发言人标记里。
+
+实测已知的昵称例子：`Auuuu`、`_樛木`、`QAQ`、
+`第五以晨`、`星霜几转`、`青提柠檬酸`、`坠`、
+`叮叮叮叮嘶嘶嘶嘶` 等。
+
+### 不能看到
+
+- **完整成员列表**：`GET /v2/groups/{gid}/members` 返回
+  `11253 应用无接口访问权限`；
+- **member_openid 对应的 QQ 号/群名片**：平台不提供映射；
+- **没发过言、也没被 @ 的潜水成员**。
+
+想让 bot 认识某个群友：让他在群里说句话（bot 会记下昵称），
+或用 `/叫我 <名字>` 人工登记称呼。
+
+## 7. 相关文件
 
 - `usage_report.py`：日报生成、定时检查、pending 补发；
 - `usage_store.py`：用量落库与区间汇总；
