@@ -60,6 +60,13 @@ CREATE TABLE IF NOT EXISTS learn_state (
     scope   TEXT PRIMARY KEY,
     last_ts REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS group_settings (
+    scope      TEXT NOT NULL,
+    key        TEXT NOT NULL,
+    value      TEXT NOT NULL,
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (scope, key)
+);
 """
 
 
@@ -70,6 +77,10 @@ def enabled() -> bool:
 
 
 class MemoryStore:
+    def enabled(self) -> bool:
+        """实例级快捷方式；模块级 enabled() 仍是唯一开关来源。"""
+        return enabled()
+
     def __init__(self, db_path: str | None = None):
         self.db_path = (
             db_path
@@ -159,6 +170,57 @@ class MemoryStore:
         return cur.rowcount or 0
 
     # ---------------- 黑话 ----------------
+
+    # ---------------- 群级设置（随机接话概率等） ----------------
+
+    async def set_group_setting(self, scope: str, key: str, value: str) -> None:
+        if not enabled():
+            return
+        await asyncio.to_thread(self._set_group_setting_sync, scope, key, value)
+
+    def _set_group_setting_sync(self, scope: str, key: str, value: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO group_settings(scope, key, value, updated_at) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT(scope, key) DO UPDATE SET "
+                "value = excluded.value, updated_at = excluded.updated_at",
+                (scope, key, str(value), time.time()),
+            )
+
+    async def get_group_setting(self, scope: str, key: str) -> str:
+        if not enabled():
+            return ""
+        return await asyncio.to_thread(self._get_group_setting_sync, scope, key)
+
+    def _get_group_setting_sync(self, scope: str, key: str) -> str:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM group_settings WHERE scope = ? AND key = ?",
+                (scope, key),
+            ).fetchone()
+        return (row["value"] or "") if row else ""
+
+    async def delete_group_setting(self, scope: str, key: str) -> None:
+        await asyncio.to_thread(self._delete_group_setting_sync, scope, key)
+
+    def _delete_group_setting_sync(self, scope: str, key: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM group_settings WHERE scope = ? AND key = ?",
+                (scope, key),
+            )
+
+    async def list_group_settings(self, key: str) -> dict[str, str]:
+        """返回 {scope: value}，启动时一次性加载群级覆盖。"""
+        return await asyncio.to_thread(self._list_group_settings_sync, key)
+
+    def _list_group_settings_sync(self, key: str) -> dict[str, str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT scope, value FROM group_settings WHERE key = ?",
+                (key,),
+            ).fetchall()
+        return {r["scope"]: (r["value"] or "") for r in rows}
 
     async def add_slang(
         self,

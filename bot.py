@@ -35,6 +35,7 @@ import memory_store
 import names
 import notices
 import persona
+import random_reply
 import r6stats
 import sensitive
 import tagger
@@ -401,6 +402,7 @@ HELP_TEXT = (
     "【记忆】/叫我 名字　让本机记住你的称呼\n"
     "　　　/黑话 [词]　查本群黑话　/黑话 添加 词 解释（管理员）\n"
     "　　　/印象　看本机对你的印象\n"
+    "【接话】/接话 [5%|0.03|关|默认]　调整本群随机接话概率（任何人可改）\n"
     "\n"
     "【收藏】/添加 关键词…　引用一张图片后回复；同消息附图须带「/」\n"
     "【批量】/批量添加 关键词　一次最多 5 张，把消息里的图片入库\n"
@@ -2497,15 +2499,16 @@ def group_preamble(message, tag: str, dedup_prefix: str) -> str | None:
 
 
 def should_random_reply(group_openid: str, content: str) -> bool:
-    """群友随机接话：概率 + 每群冷却 + 基本过滤。默认概率 0，永远返回 False。"""
-    if RANDOM_REPLY_P <= 0:
+    """群友随机接话：概率（可按群覆盖）+ 每群冷却 + 基本过滤。"""
+    p = random_reply.probability(group_openid, RANDOM_REPLY_P)
+    if p <= 0:
         return False
     text = (content or "").strip()
     if not text or text.startswith("/"):
         return False
     if not persona.available():
         return False
-    if random.random() >= RANDOM_REPLY_P:
+    if random.random() >= p:
         return False
     if not random_reply_cooldown.allow(group_openid):
         log.debug("[随机接话] 群冷却中，跳过: %s", group_openid[:10])
@@ -3227,6 +3230,13 @@ async def handle_command(message, api, scope: str, scene_id: str, content: str) 
         await do_impression(message, scope, text)
         return True
 
+    # 随机接话概率：任何人可调，只影响本群
+    if random_reply.PATTERN.match(text):
+        await random_reply.handle(
+            message, scope, text, RANDOM_REPLY_P, memory
+        )
+        return True
+
     if USAGE_RE.match(text):
         await do_usage(message, text)
         return True
@@ -3356,6 +3366,8 @@ class MyClient(botpy.Client):
         # 看门狗必须在这里启动：此时事件循环已在运行。
         # 若在 asyncio.run() 之前创建 Client 并调度任务，任务会被挂到另一个
         # 未运行的事件循环上，导致机器人卡在启动阶段无法连接。
+        # 群级随机接话覆盖（/接话 设置的），上线时从 memory.db 读回
+        await random_reply.load(memory)
         if self._watchdog_task is None or self._watchdog_task.done():
             self._watchdog_task = asyncio.create_task(
                 watchdog.watch(WATCHDOG_IDLE_TIMEOUT)
@@ -3544,7 +3556,10 @@ class MyClient(botpy.Client):
             log.info(
                 "[随机接话] group=%s p=%.1f%%: %s",
                 message.group_openid[:10],
-                RANDOM_REPLY_P * 100.0,
+                random_reply.probability(
+                    message.group_openid, RANDOM_REPLY_P
+                )
+                * 100.0,
                 content[:30],
             )
             await persona_reply(
