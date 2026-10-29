@@ -70,7 +70,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\upload.ps1 -SkipTes
 ```
 人格聊天已启用：模型=qwen-flash-character，记忆 100 条/会话
 看图已启用：视觉模型=qwen3-vl-flash（带图消息优先走视觉链路）
-[公告] 轮询已启动：间隔 10 分钟，关键词=更新|维护|停机|版本|活动预告
+[公告] 轮询已启动：间隔 5 分钟，关键词=更新|维护|停机|版本|活动预告
 机器人「依蜜尔爱因-测试中」已上线
 ```
 

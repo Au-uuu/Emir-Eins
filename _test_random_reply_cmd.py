@@ -104,6 +104,9 @@ async def main() -> int:
     check("非法输入给写法", "写法" in text or "/接话 5%" in text, text)
     check("非法输入不改值", abs(random_reply.probability("G", 0.03) - 0.5) < 1e-9)
 
+    _, text = await send("/接话 1")
+    check("1 按 1% 理解", abs(random_reply.probability("G", 0.03) - 0.01) < 1e-9, text)
+    await send("/接话 默认")
     print("[6] 概率真的影响 should_random_reply")
     orig_available = bot.persona.available
     orig_random = bot.random.random

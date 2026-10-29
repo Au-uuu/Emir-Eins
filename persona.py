@@ -33,7 +33,7 @@ OpenAI 兼容接口，用标准库 `urllib` 就能调，**不引入新依赖**�
 | `QQ_BOT_VL_URL` | **视觉链路**独立的端点；留空则回退到 `QQ_BOT_QWEN_URL` |
 | `QQ_BOT_VL_IMAGE_FORMAT` | 图片来源格式：`data_uri`（默认，OpenAI/DashScope）或 `base64`（智谱裸 base64） |
 | `QQ_BOT_VL_THINKING` | 思考模式 `enabled`/`disabled`（智谱 GLM-4.6V 系列）；留空不带该字段 |
-| `QQ_BOT_TEXT_THINKING` | 文本链路思考模式：默认 `disabled`（聊天优先速度）；复杂任务可设 `enabled` |
+| `QQ_BOT_TEXT_THINKING` | 文本链路思考模式：留空=厂商默认；线上设 `disabled` 优先速度；复杂任务可设 `enabled` |
 | `QQ_BOT_VL_DESCRIBE` | 两阶段看图：`1` = GLM 先客观描述、再由 qwen 转人设；留空/`0` = 单次调用（现状） |
 | `QQ_BOT_PERSONA_FILE` | 角色卡路径，默认 `persona/依蜜尔爱因.md` |
 | `QQ_BOT_CHAT_TIMEOUT` | 单次请求超时秒数，默认 20 |
@@ -127,7 +127,7 @@ def text_thinking() -> str:
     几百到两千 reasoning token，实测把 2~4 秒拖到 5~30 秒，还会出现
     max_tokens 被 reasoning 吃光、正文为空。默认 disabled，复杂任务可改 enabled。
     """
-    return (_env("QQ_BOT_TEXT_THINKING") or "disabled").lower()
+    return _env("QQ_BOT_TEXT_THINKING").lower()
 
 
 _TRUTHY = {"1", "true", "on", "yes"}

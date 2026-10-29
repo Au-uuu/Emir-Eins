@@ -136,7 +136,7 @@
 
 - R6：`Arenyze /v2/profile + /v2/fullstats` → `r6stats._build` 归一 → 缓存 5 分钟（SWR）→ `r6_card.render`（PIL）→ 上传发图。
 - 知识库：`tools/build_kb_server.py` 抓 wiki → `data/kb/*.md` → `kb.py` BM25（**加载后不热更，改语料要重启**）→ 注入人格提示词。
-- 公告：`ark_news.poll_loop`（10 分钟）→ 抓列表 → `push_store.filter_unseen` → 关键词过滤 → `api.post_group_message`（**主动消息**，无 msg_id）。
+- 公告：`ark_news.poll_loop`（5 分钟，no-cache + 时间戳，每 12 轮心跳）→ 抓列表 → `push_store.filter_unseen` → 关键词过滤 → `api.post_group_message`（**主动消息**，无 msg_id）。
 
 ---
 

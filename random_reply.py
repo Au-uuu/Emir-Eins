@@ -45,7 +45,10 @@ def _parse_p(raw: str, clamp: bool = True) -> float | None:
         value = float(text)
     except ValueError:
         return None
-    if percent or value > 1:
+    # 不带小数点的写法按百分数理解：`1` = 1%，`5` = 5%；
+    # 带小数点仍是概率：`0.03` = 3%，`0.5` = 50%。
+    bare_int = "." not in text
+    if percent or value > 1 or (bare_int and value >= 1):
         value /= 100.0
     value = max(0.0, value)
     return min(MAX_P, value) if clamp else value
