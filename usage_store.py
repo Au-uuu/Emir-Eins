@@ -111,6 +111,17 @@ class UsageStore:
 
     def _summary_sync(self, days: float) -> dict:
         cutoff = time.time() - max(0.1, float(days)) * 86400
+        data = self._summary_between_sync(cutoff, time.time())
+        data["days"] = days
+        return data
+
+    async def summary_between(self, start_ts: float, end_ts: float) -> dict:
+        """指定时间区间（左闭右开）的汇总，日报用。"""
+        return await asyncio.to_thread(
+            self._summary_between_sync, float(start_ts), float(end_ts)
+        )
+
+    def _summary_between_sync(self, start_ts: float, end_ts: float) -> dict:
         with self._connect() as conn:
             total = conn.execute(
                 "SELECT COUNT(*) AS calls, COALESCE(SUM(prompt),0) AS prompt, "
@@ -118,21 +129,23 @@ class UsageStore:
                 "COALESCE(SUM(reasoning),0) AS reasoning, "
                 "COALESCE(SUM(cached),0) AS cached, "
                 "COALESCE(SUM(cost),0) AS cost "
-                "FROM usage WHERE ts >= ?",
-                (cutoff,),
+                "FROM usage WHERE ts >= ? AND ts < ?",
+                (start_ts, end_ts),
             ).fetchone()
             kinds = conn.execute(
                 "SELECT kind, COUNT(*) AS calls, COALESCE(SUM(cost),0) AS cost "
-                "FROM usage WHERE ts >= ? GROUP BY kind ORDER BY calls DESC",
-                (cutoff,),
+                "FROM usage WHERE ts >= ? AND ts < ? GROUP BY kind ORDER BY calls DESC",
+                (start_ts, end_ts),
             ).fetchall()
             scopes = conn.execute(
                 "SELECT scope, COUNT(*) AS calls, COALESCE(SUM(cost),0) AS cost "
-                "FROM usage WHERE ts >= ? GROUP BY scope ORDER BY cost DESC, calls DESC LIMIT 8",
-                (cutoff,),
+                "FROM usage WHERE ts >= ? AND ts < ? "
+                "GROUP BY scope ORDER BY cost DESC, calls DESC LIMIT 8",
+                (start_ts, end_ts),
             ).fetchall()
         return {
-            "days": days,
+            "start": start_ts,
+            "end": end_ts,
             "total": dict(total) if total else {},
             "kinds": [dict(r) for r in kinds],
             "scopes": [dict(r) for r in scopes],

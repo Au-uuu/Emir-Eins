@@ -39,6 +39,7 @@ import random_reply
 import r6stats
 import sensitive
 import tagger
+import usage_report
 import usage_store
 import video_frames
 import watchdog
@@ -3358,6 +3359,7 @@ class MyClient(botpy.Client):
         self._watchdog_task: asyncio.Task | None = None
         self._news_task: asyncio.Task | None = None
         self._notice_task: asyncio.Task | None = None
+        self._usage_report_task: asyncio.Task | None = None
         self._r6_warm_task: asyncio.Task | None = None
         self._memory_task: asyncio.Task | None = None
 
@@ -3382,6 +3384,11 @@ class MyClient(botpy.Client):
         if self._notice_task is None or self._notice_task.done():
             self._notice_task = asyncio.create_task(
                 notices.poll_loop(self.api, store, push_store)
+            )
+        # 每日用量日报：固定时间主动发到管理员群（未配置群则自动跳过）
+        if self._usage_report_task is None or self._usage_report_task.done():
+            self._usage_report_task = asyncio.create_task(
+                usage_report.poll_loop(self.api, usage)
             )
         # 黑话/人物印象自动学习（默认关闭；线上 .env 配 120 分钟）
         if MEMORY_LEARN_MINUTES > 0 and (
@@ -3459,6 +3466,10 @@ class MyClient(botpy.Client):
         content = group_preamble(message, "群全量", "all")
         if content is None:
             return
+
+        # 管理员群：如果有因为没开主动发言而积压的用量日报，趁这次说话补发
+        if message.group_openid == usage_report.group_id():
+            await usage_report.flush_pending(message, next_msg_seq(message.id))
 
         mentions_me = mentioned_bot(message)
 
