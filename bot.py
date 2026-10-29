@@ -129,6 +129,37 @@ VISION_MAX_IMAGE_BYTES = 8 * 1024 * 1024
 # 单发一张 GIF 时抽几帧给模型（首/中/尾），动图的梗常在后面，只看第一帧会漏
 VISION_GIF_FRAMES = 3
 
+# 媒体说明：抽帧后喂给模型的是多张 PNG，必须显式告诉它这些不是独立图片。
+# 不写的话模型会当成「用户连发三张图」，回复就会变成逐张点评，很不自然。
+GIF_MEDIA_NOTE = (
+    "【媒体说明】这条消息是**一个 GIF 动图**，前面 {n} 张图是同一段动图按时间顺序"
+    "抽出的帧（开头/中间/结尾），不是 {n} 张独立图片。请把它们连起来理解成一个"
+    "连续的动作或表情变化；回复时像看完整段动图那样自然反应，不要逐帧报流水账。"
+)
+GIF_ONE_FRAME_NOTE = (
+    "【媒体说明】这条消息是一个 GIF 动图，但只取到了其中一帧。按动图的一帧来理解，"
+    "不要把这一帧当成用户单独发的一张静态图。"
+)
+VIDEO_MEDIA_NOTE = (
+    "【媒体说明】这条消息是一个**视频**，前面 {n} 张图是按时间顺序从视频里抽出的"
+    "画面帧，不是独立图片。请连起来理解视频内容，不要逐帧描述。"
+)
+
+
+def vision_media_note(meta: dict) -> str:
+    """根据 collect_vision_images 填的 meta 生成媒体说明（没有则空串）。"""
+    if not meta:
+        return ""
+    n = int(meta.get("gif_frames") or 0)
+    if n > 1:
+        return GIF_MEDIA_NOTE.format(n=n)
+    if meta.get("gif"):
+        return GIF_ONE_FRAME_NOTE
+    frames = int(meta.get("video_frames") or 0)
+    if frames > 1:
+        return VIDEO_MEDIA_NOTE.format(n=frames)
+    return ""
+
 # 引用消息（含合并转发卡片）：QQ 平台把被引用内容合成为可读文本塞进
 # msg_elements[].content，带 [消息类型] 引用消息 标记，图片以 URL: 形式内嵌。
 QUOTE_MARKER = "[消息类型] 引用消息"
@@ -893,7 +924,9 @@ def _warn_if_blank(data: bytes) -> None:
         pass  # 哨兵本身绝不能影响看图链路
 
 
-async def collect_vision_images(message) -> list[tuple[str, bytes]]:
+async def collect_vision_images(
+    message, meta: dict | None = None
+) -> list[tuple[str, bytes]]:
     """
     收集消息里的图片，归一化成视觉模型能吃的 (mime, bytes)。
 
@@ -901,6 +934,10 @@ async def collect_vision_images(message) -> list[tuple[str, bytes]]:
     （合并转发卡片把图以 URL: 形式写在文字摘要里）。任何一环失败（未开看图、
     下载、格式、转换）都只跳过那一张，绝不抛异常——看图是聊天的加分项，不能
     因为它把整条回复搞挂。调用方拿到空列表时自行退回纯文本链路。
+
+    meta（可选）：回填媒体来源，给调用方拼「这是 GIF 抽帧/视频抽帧」的说明。
+      gif=True / gif_frames=N   单发动图抽了几帧（1 = 只取到首帧）
+      video_frames=N            视频抽帧数量由调用方回填
     """
     if not persona.vision_enabled():
         return []
@@ -939,6 +976,9 @@ async def collect_vision_images(message) -> list[tuple[str, bytes]]:
                     for f in sample_frames_png(data, VISION_GIF_FRAMES)
                     if len(f) <= VISION_MAX_IMAGE_BYTES
                 ]
+                if meta is not None:
+                    meta["gif"] = True
+                    meta["gif_frames"] = len(frames)
                 if frames:
                     for f in frames:
                         _warn_if_blank(f)
@@ -2609,7 +2649,8 @@ async def persona_reply(message, scope: str, content: str) -> None:
         log.info("[人格] 命中敏感词，已静默: scope=%s", scope)
         return
 
-    images = await collect_vision_images(message)
+    media_meta: dict = {}
+    images = await collect_vision_images(message, media_meta)
     video_url = collect_video_url(message)
     video_frames_used = False
     if video_url and video_frames.enabled():
@@ -2618,6 +2659,7 @@ async def persona_reply(message, scope: str, content: str) -> None:
             if frames:
                 images = images + frames
                 video_frames_used = True
+                media_meta["video_frames"] = len(frames)
                 log.info("[视频] 已抽帧 %d 张，交给视觉模型", len(frames))
             else:
                 log.warning("[视频] 抽帧失败，按无视频处理")
@@ -2713,23 +2755,33 @@ async def persona_reply(message, scope: str, content: str) -> None:
     # 离线打标线索（Camie）：已收录角色的特征→标签映射，帮模型报出角色名。
     # 视频抽帧不做打标（几十帧逐个打太慢，且视频重点通常是动作/场景）。
     hints = await tagger_hints(images) if images and not video_frames_used else ""
+    # 媒体说明：GIF/视频抽帧是多张 PNG，不说明的话模型会当成连发多图逐张点评。
+    media_note = vision_media_note(media_meta) if media else ""
 
     if media and persona.describe_mode():
         # 两阶段：视觉模型（GLM）先客观描述，再交给文本链路（qwen）转人设。
-        desc = await persona.describe(images, video_url, hints, scope)
+        # 媒体说明也交给描述阶段，否则它会把 GIF 三帧写成「三张独立的图」。
+        desc_hint = "\n".join(x for x in (media_note, hints) if x)
+        desc = await persona.describe(images, video_url, desc_hint, scope)
         if desc:
             model_text = f"（视觉模型对这条内容的客观描述：\n{desc}\n）\n" + model_text
+            if media_note:
+                model_text = media_note + "\n" + model_text
             reply = await persona.generate(history, model_text, scope)
         elif images:
-            # 描述失败：退回单次视觉调用（仍带打标线索）
+            # 描述失败：退回单次视觉调用（仍带打标线索 + 媒体说明）
             if hints:
                 model_text = hints + model_text
+            if media_note:
+                model_text = media_note + "\n" + model_text
             reply = await persona.generate_vision(history, model_text, images, scope)
         else:
             reply = await persona.generate(history, model_text, scope)
     elif images:
         if hints:
             model_text = hints + model_text
+        if media_note:
+            model_text = media_note + "\n" + model_text
         reply = await persona.generate_vision(history, model_text, images, scope)
     else:
         reply = await persona.generate(history, model_text, scope)

@@ -583,8 +583,9 @@ async def main() -> int:
         return _buf.getvalue()
 
     bot.store.download = gif_download
+    gif_meta = {}
     imgs = await bot.collect_vision_images(
-        ImgMessage("", [make_att(ct="image/gif")])
+        ImgMessage("", [make_att(ct="image/gif")]), gif_meta
     )
     check(
         "单发动图抽 3 帧（PNG）",
@@ -593,6 +594,22 @@ async def main() -> int:
         f"n={len(imgs)}",
     )
     check("抽的是首/中/尾不同帧", len({d for _, d in imgs}) == 3)
+    check(
+        "GIF 抽帧回填 meta",
+        gif_meta.get("gif") is True and gif_meta.get("gif_frames") == 3,
+        str(gif_meta),
+    )
+    gif_note = bot.vision_media_note(gif_meta)
+    check(
+        "GIF 媒体说明点明是一个动图、不是多张独立图",
+        "GIF" in gif_note and "不是 3 张独立图片" in gif_note,
+        gif_note,
+    )
+    check(
+        "视频抽帧也有媒体说明",
+        "视频" in bot.vision_media_note({"video_frames": 9}),
+    )
+    check("没有媒体时不加说明", bot.vision_media_note({}) == "")
 
     imgs = await bot.collect_vision_images(
         ImgMessage("", [make_att(ct="image/gif"), make_att(url="http://img/b.png")])

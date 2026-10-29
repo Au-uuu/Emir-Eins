@@ -76,6 +76,8 @@ _HEADERS = {
         "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
     ),
     "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
 }
 _TIMEOUT = aiohttp.ClientTimeout(total=20)
 
@@ -161,7 +163,10 @@ async def _fetch_ak(session: aiohttp.ClientSession) -> list[NewsItem]:
     items: list[NewsItem] = []
     seen: set[str] = set()
     for page in range(1, AK_PAGES + 1):
-        url = f"https://ak.hypergryph.com/api/news?category=LATEST&page={page}"
+        url = (
+            "https://ak.hypergryph.com/api/news"
+            f"?category=LATEST&page={page}&_t={int(time.time())}"
+        )
         async with session.get(url) as resp:
             resp.raise_for_status()
             payload = json.loads(await resp.text())
@@ -230,7 +235,9 @@ def extract_endfield_bulletins(html: str) -> list[dict]:
 
 async def _fetch_endfield(session: aiohttp.ClientSession) -> list[NewsItem]:
     """终末地：抓官网 news 页 HTML，从内嵌数据里提取公告。"""
-    async with session.get("https://endfield.hypergryph.com/news") as resp:
+    async with session.get(
+        f"https://endfield.hypergryph.com/news?_t={int(time.time())}"
+    ) as resp:
         resp.raise_for_status()
         html = await resp.text()
     rows = extract_endfield_bulletins(html)
@@ -320,6 +327,7 @@ async def poll_loop(api, pstore) -> None:
         _keywords_pattern().pattern,
     )
     async with aiohttp.ClientSession(timeout=_TIMEOUT, headers=_HEADERS) as session:
+        rounds = 0
         while True:
             try:
                 await poll_once(session, api, pstore)
@@ -327,6 +335,14 @@ async def poll_loop(api, pstore) -> None:
                 # 单个游戏拉取失败在 poll_once 里已记日志；这里兜住其余意外，
                 # 保证轮询循环永不退出
                 log.exception("[公告] 本轮轮询异常")
+            rounds += 1
+            # 心跳：默认 INFO 每 12 轮一条（5 分钟间隔 = 每小时），用来回答
+            # 「服务是不是炸了」。正常轮询时不刷屏，真挂了会先缺心跳。
+            if rounds % 12 == 0:
+                log.info(
+                    "[公告] 轮询心跳：已跑 %d 轮，间隔 %.0f 分钟，服务正常",
+                    rounds, minutes,
+                )
             await asyncio.sleep(minutes * 60)
 
 
@@ -365,6 +381,22 @@ async def poll_once(session: aiohttp.ClientSession, api, pstore) -> None:
         hits = [it for it in fresh if is_update_news(it.title)]
         if not hits:
             continue
+        now = time.time()
+        for it in hits:
+            delay_min = max(0.0, (now - it.ts) / 60.0)
+            log.info(
+                "[公告] 新公告 %s（发布 %s，延迟 %.0f 分钟）：%s",
+                GAMES[game]["name"],
+                _fmt_time(it.ts),
+                delay_min,
+                it.title,
+            )
+            if delay_min > 90:
+                log.warning(
+                    "[公告] %s 这条发布已 %.0f 分钟才出现在列表里，"
+                    "可能是官网/CDN 延迟；已加 no-cache 与时间戳参数",
+                    GAMES[game]["name"], delay_min,
+                )
         await push_to_groups(api, pstore, game, format_push_text(game, hits))
 
 
