@@ -368,13 +368,13 @@ QQ_BOT_RANDOM_REPLY_COOLDOWN=300  # 同群两次随机接话至少隔 5 分钟
 视觉先做客观描述，再由人设链路回复。角色卡、历史、限流、敏感词过滤与纯文本一致。
 
 - 一次最多传 3 张消息图片，单张 ≤8MB；**单发一张 GIF 时会抽首/中/尾 3 帧**。
-- **视频默认抽帧**：下载视频后每 **15 秒**抽一帧；短视频至少 **9 帧**，最多 30 帧，
-  再把帧当图片交给视觉模型（DS 不吃 `video_url`）。
+- **视频默认抽帧**：下载视频后每 **10 秒**抽一帧；短视频至少 **9 帧**，最多 30 帧，
+  再把帧当图片交给视觉模型（DS 不吃 `video_url`）。长视频超过帧数上限时自动放宽间隔。
 - 视频抽帧配置：`QQ_BOT_VIDEO_MODE=frames|url|off`、
-  `QQ_BOT_VIDEO_FRAME_INTERVAL=15`、`QQ_BOT_VIDEO_MIN_FRAMES=9`、
+  `QQ_BOT_VIDEO_FRAME_INTERVAL=10`、`QQ_BOT_VIDEO_MIN_FRAMES=9`、
   `QQ_BOT_VIDEO_MAX_FRAMES=30`、`QQ_BOT_VIDEO_MAX_MB=40`。
 - **B 站链接默认解析**：发 `bilibili.com/video/BV...` 或 `b23.tv` 链接并 @ 机器人，
-  会取标题/UP/简介，并按每 **10 秒**一帧抽 9~24 帧交给视觉模型；
+  会取标题/UP/简介，并按每 **10 秒**一帧抽 9~24 帧交给视觉模型（长视频达到上限会自动放宽间隔）；
   主动接话只取标题、不下载视频。配置：`QQ_BOT_BILI=1`、
   `QQ_BOT_BILI_INTERVAL=10`、`QQ_BOT_BILI_MAX_FRAMES=24`。
 - 看图默认常开；只有 `QQ_BOT_VL_MODEL=off` 才会关掉。

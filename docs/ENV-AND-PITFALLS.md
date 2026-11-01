@@ -105,7 +105,7 @@
 | `QQ_BOT_GROUP_CONTEXT_MAX` / `_MINUTES` / `_CHARS` | 最近条数 / 分钟数 / 注入字数上限（线上 60 / 120 / 4000） |
 | `QQ_BOT_CHAT_MEMORY` / `_MINUTES` | 人格记忆：每会话条数 / 存活分钟（线上 200 / 60） |
 | `QQ_BOT_CHAT_RECENT` / `_SUMMARY_EVERY` | 最近保留原文条数 / 多少条触发摘要（线上 20 / 50） |
-| `QQ_BOT_VIDEO_MODE` | 视频处理：`frames`（默认）/ `url` / `off`；`FRAME_INTERVAL` 15s、`MIN_FRAMES` 9、`MAX_FRAMES` 30 |
+| `QQ_BOT_VIDEO_MODE` | 视频处理：`frames`（默认）/ `url` / `off`；`FRAME_INTERVAL` 10s、`MIN_FRAMES` 9、`MAX_FRAMES` 30；超上限自动放宽间隔 |
 | `QQ_BOT_ARKDATA*` / `QQ_BOT_ARKENEMY` / `QQ_BOT_ARKLORE` | 数值/敌人/语音快照路径；每日 12:00 检查 7 张上游表，只提醒不自动下载 |
 | `QQ_BOT_BILI*` | B 站解析：`BILI=1`、`MAX_MB=40`、`INTERVAL=10`、`MIN_FRAMES=9`、`MAX_FRAMES=24` |
 | `QQ_BOT_MEME*` | 梗库：`MEME=1`、`SEARCH=1`、`AUTO=1`、`CONF=0.55`、`DB=data/meme.db` |

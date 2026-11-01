@@ -4,16 +4,17 @@
 
 规则（用户定）
 --------------
-- 每 15 秒抽 1 帧；
+- 每 10 秒抽 1 帧；
 - 短视频至少 9 帧（10 秒视频也抽 9 帧，均匀分布）；
-- 长视频按 15 秒一帧，最多 MAX_FRAMES（默认 30，防止一次喂太多图）。
+- 长视频按 10 秒一帧，最多 MAX_FRAMES（默认 30，防止一次喂太多图）；
+  超过上限时自动放宽间隔，保证总帧数不超限。
 
 配置
 ----
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `QQ_BOT_VIDEO_MODE` | `frames` | `frames`=抽帧；`url`=直接把 video_url 交给模型（GLM）；`off`=不处理 |
-| `QQ_BOT_VIDEO_FRAME_INTERVAL` | `15` | 每多少秒一帧 |
+| `QQ_BOT_VIDEO_FRAME_INTERVAL` | `10` | 每多少秒一帧（长视频超帧数上限时自动放宽） |
 | `QQ_BOT_VIDEO_MIN_FRAMES` | `9` | 至少抽几帧 |
 | `QQ_BOT_VIDEO_MAX_FRAMES` | `30` | 最多抽几帧 |
 | `QQ_BOT_VIDEO_MAX_MB` | `40` | 视频下载上限 |
@@ -66,7 +67,7 @@ def frame_plan(
 ) -> tuple[int, float]:
     """返回 (帧数, 采样间隔秒)。短视频补到 MIN_FRAMES，长视频按 INTERVAL。"""
     if interval is None:
-        interval = _num("QQ_BOT_VIDEO_FRAME_INTERVAL", 15.0, 1.0, 120.0)
+        interval = _num("QQ_BOT_VIDEO_FRAME_INTERVAL", 10.0, 1.0, 120.0)
     if min_frames is None:
         min_frames = int(_num("QQ_BOT_VIDEO_MIN_FRAMES", 9, 1, 20))
     if max_frames is None:

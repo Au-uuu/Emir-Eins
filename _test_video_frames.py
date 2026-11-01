@@ -11,7 +11,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 os.environ["QQ_BOT_VIDEO_MODE"] = "frames"
-os.environ["QQ_BOT_VIDEO_FRAME_INTERVAL"] = "15"
+os.environ["QQ_BOT_VIDEO_FRAME_INTERVAL"] = "10"
 os.environ["QQ_BOT_VIDEO_MIN_FRAMES"] = "9"
 os.environ["QQ_BOT_VIDEO_MAX_FRAMES"] = "30"
 os.environ["QQ_BOT_GROUP_CONTEXT"] = "0"
@@ -66,10 +66,12 @@ async def main() -> int:
     check("10 秒视频至少 9 帧", n == 9, (n, step))
     check("短视频间隔 <1.5 秒", step < 1.5, step)
     n2, step2 = video_frames.frame_plan(150)
-    check("150 秒约 10 帧", n2 == 10, (n2, step2))
-    check("长视频约 15 秒一帧", abs(step2 - 15) < 3, step2)
+    check("150 秒约 15 帧", n2 == 15, (n2, step2))
+    check("长视频约 10 秒一帧", abs(step2 - 10) < 3, step2)
     n3, step3 = video_frames.frame_plan(10000)
     check("超长视频封顶 30 帧", n3 == 30, n3)
+    n4, step4 = video_frames.frame_plan(600)
+    check("超上限自动放宽间隔", n4 == 30 and abs(step4 - 20) < 2, (n4, step4))
 
     print("[2] 接入 persona_reply")
     seen = {}
