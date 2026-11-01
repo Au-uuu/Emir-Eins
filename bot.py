@@ -27,6 +27,8 @@ from dotenv import load_dotenv
 
 import ark_news
 import arkdata
+import arkdata_update
+import arklore
 import fortune
 import group_context
 import help_image
@@ -2779,6 +2781,16 @@ async def persona_reply(
         if ark_ctx:
             model_text = ark_ctx + model_text
             log.info("[数值] 已注入 %d 字：%s", len(ark_ctx), content[:30])
+    # 干员语音/档案：按需取一小段，不整本塞进上下文
+    lore_ctx = ""
+    if content and content != IMAGE_ONLY_PLACEHOLDER:
+        try:
+            lore_ctx = await asyncio.to_thread(arklore.context, content)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[资料] 查询失败：%s", exc)
+        if lore_ctx:
+            model_text = lore_ctx + model_text
+            log.info("[资料] 已注入 %d 字：%s", len(lore_ctx), content[:30])
     # 本地知识库检索（RAG，轻量 BM25）：命中就拼进提示词，让事实更准
     kb_ctx = ""
     if content and content != IMAGE_ONLY_PLACEHOLDER:
@@ -2793,10 +2805,11 @@ async def persona_reply(
         and not media
         and not kb_ctx
         and not ark_ctx
+        and not lore_ctx
         and websearch.should_search(content)
     )
-    # 有知识库/数值/联网事实时降低温度，优先准确，少点自由发挥
-    factual = bool(ark_ctx or kb_ctx or search_should)
+    # 有知识库/数值/资料/联网事实时降低温度，优先准确，少点自由发挥
+    factual = bool(ark_ctx or lore_ctx or kb_ctx or search_should)
     if search_should:
         summary = await asyncio.to_thread(websearch.search, content)
         if summary:
@@ -3419,6 +3432,7 @@ class MyClient(botpy.Client):
         self._news_task: asyncio.Task | None = None
         self._notice_task: asyncio.Task | None = None
         self._usage_report_task: asyncio.Task | None = None
+        self._arkdata_task: asyncio.Task | None = None
         self._r6_warm_task: asyncio.Task | None = None
         self._memory_task: asyncio.Task | None = None
 
@@ -3448,6 +3462,11 @@ class MyClient(botpy.Client):
         if self._usage_report_task is None or self._usage_report_task.done():
             self._usage_report_task = asyncio.create_task(
                 usage_report.poll_loop(self.api, usage)
+            )
+        # 每天 12:00 检查明日方舟数值快照的上游更新
+        if self._arkdata_task is None or self._arkdata_task.done():
+            self._arkdata_task = asyncio.create_task(
+                arkdata_update.poll_loop(self.api)
             )
         # 黑话/人物印象自动学习（默认关闭；线上 .env 配 120 分钟）
         if MEMORY_LEARN_MINUTES > 0 and (
