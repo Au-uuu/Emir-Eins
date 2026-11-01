@@ -30,6 +30,7 @@ import arkdata
 import arkdata_update
 import arkenemy
 import arklore
+import bili
 import fortune
 import group_context
 import help_image
@@ -403,6 +404,7 @@ HELP_TEXT = (
     "\n"
     "【闲聊】不输指令直接说话就能聊：单聊直接说，群里要 @ 我\n"
     "　　　看图：单聊直接发图，群里 @ 我发图，能看懂图说话（动图看前中后三帧）\n"
+    "　　　看视频：发 B 站链接并 @ 我，会取标题并按时间抽帧看画面（稍慢）\n"
     "　　　闲聊发的图片只用来回复，不会被收藏进图库\n"
     "\n"
     "【记忆】/叫我 名字　让本机记住你的称呼\n"
@@ -2714,6 +2716,7 @@ async def persona_reply(
         log.info("[人格] 命中敏感词，已静默: scope=%s", scope)
         return
 
+    quote = quoted_content(message)
     media_meta: dict = {}
     images = await collect_vision_images(message, media_meta)
     video_url = collect_video_url(message)
@@ -2732,6 +2735,24 @@ async def persona_reply(
             video_url = ""
         elif video_frames.mode() == "off":
             video_url = ""
+    # B 站链接：官方接口取标题/简介，必要时下载视频流抽帧（QQ 视频附件另走上面）
+    bili_meta = ""
+    bili_url = bili.pick_url(content) or (bili.pick_url(quote) if quote else "")
+    if bili_url and bili.enabled():
+        try:
+            bili_meta, bili_frames = await asyncio.to_thread(
+                bili.parse, bili_url, not proactive
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[B站] 解析异常：%s", exc)
+            bili_meta, bili_frames = "", []
+        if bili_meta:
+            log.info("[B站] 已解析：%s", bili_meta.splitlines()[0][:40])
+        if bili_frames:
+            images = images + bili_frames
+            video_frames_used = True
+            media_meta["video_frames"] = len(bili_frames)
+            log.info("[B站] 已抽帧 %d 张，交给视觉模型", len(bili_frames))
     media = bool(images or video_url)
     image_only = content == IMAGE_ONLY_PLACEHOLDER
 
@@ -2770,9 +2791,10 @@ async def persona_reply(
     # 把被引用内容的平台展开文本拼进本轮输入，模型才有东西可看可答。
     # 只拼当前轮，历史里仍存原文，不膨胀记忆。
     model_text = content
-    quote = quoted_content(message)
     if quote:
         model_text = f"（用户引用了下面这条消息提问：\n{quote}\n）\n{content}"
+    if bili_meta:
+        model_text = bili_meta + "\n" + model_text
     # 材料掉率：先查企鹅物流，命中就不让模型凭印象说“去哪刷”
     penguin_ctx = ""
     if content and content != IMAGE_ONLY_PLACEHOLDER:

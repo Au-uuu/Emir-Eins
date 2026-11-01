@@ -58,11 +58,22 @@ def _num(name: str, default: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
-def frame_plan(duration: float) -> tuple[int, float]:
+def frame_plan(
+    duration: float,
+    interval: float | None = None,
+    min_frames: int | None = None,
+    max_frames: int | None = None,
+) -> tuple[int, float]:
     """返回 (帧数, 采样间隔秒)。短视频补到 MIN_FRAMES，长视频按 INTERVAL。"""
-    interval = _num("QQ_BOT_VIDEO_FRAME_INTERVAL", 15.0, 1.0, 120.0)
-    min_frames = int(_num("QQ_BOT_VIDEO_MIN_FRAMES", 9, 1, 20))
-    max_frames = int(_num("QQ_BOT_VIDEO_MAX_FRAMES", 30, min_frames, 60))
+    if interval is None:
+        interval = _num("QQ_BOT_VIDEO_FRAME_INTERVAL", 15.0, 1.0, 120.0)
+    if min_frames is None:
+        min_frames = int(_num("QQ_BOT_VIDEO_MIN_FRAMES", 9, 1, 20))
+    if max_frames is None:
+        max_frames = int(_num("QQ_BOT_VIDEO_MAX_FRAMES", 30, min_frames, 60))
+    interval = max(1.0, min(120.0, float(interval)))
+    min_frames = max(1, min(20, int(min_frames)))
+    max_frames = max(min_frames, min(60, int(max_frames)))
     if duration <= 0:
         return min_frames, interval
     n = max(min_frames, int(math.ceil(duration / interval)))
@@ -87,13 +98,18 @@ def _duration(path: str) -> float:
         return 0.0
 
 
-def extract(path: str) -> list[tuple[str, bytes]]:
+def extract(
+    path: str,
+    interval: float | None = None,
+    min_frames: int | None = None,
+    max_frames: int | None = None,
+) -> list[tuple[str, bytes]]:
     """从本地视频文件抽帧，返回 [(mime, bytes)]；失败返回 []。"""
     if not os.path.exists(path):
         return []
     ffmpeg = shutil.which(_env("QQ_BOT_FFMPEG", "ffmpeg")) or _env("QQ_BOT_FFMPEG", "ffmpeg")
     timeout = _num("QQ_BOT_VIDEO_TIMEOUT", 180.0, 20.0, 600.0)
-    n, step = frame_plan(_duration(path))
+    n, step = frame_plan(_duration(path), interval, min_frames, max_frames)
     tmpdir = tempfile.mkdtemp(prefix="qqbot_frames_")
     try:
         pattern = os.path.join(tmpdir, "f_%03d.jpg")
