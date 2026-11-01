@@ -59,12 +59,27 @@ async def main() -> int:
     check("100% 时普通消息通过", bot.should_random_reply("RG", "随便聊聊") is True)
     check("空消息不接", bot.should_random_reply("RG", "   ") is False)
     check("斜杠指令不接", bot.should_random_reply("RG", "/图库") is False)
+    check("纯确认词不接", bot.should_random_reply("RG", "ok") is False)
+    check("语气词不接", bot.should_random_reply("RG", "嗷") is False)
+    check("资讯卡片不接", bot.should_random_reply("RG", "【新闻资讯】今日") is False)
+    orig_quoted = bot.quoted_content
+    bot.quoted_content = lambda m: "引用了别人"
+    check("引用别人不接", bot.should_random_reply("RG", "你说呢", object()) is False)
+    bot.quoted_content = orig_quoted
 
     orig_p = bot.RANDOM_REPLY_P
     bot.RANDOM_REPLY_P = 0.0
     check("概率 0 时永远不接", bot.should_random_reply("RG", "随便聊聊") is False)
     bot.RANDOM_REPLY_P = orig_p
 
+    orig_raw = bot.get_raw
+    bot.get_raw = lambda m: {"author": {"bot": True, "username": "feed"}}
+    check("机器人消息识别", bot.author_is_bot(object(), "bot") is True)
+    bot.get_raw = lambda m: {"author": {"username": "bot"}}
+    check("自己消息识别", bot.author_is_bot(object(), "bot") is True)
+    bot.get_raw = lambda m: {"author": {"username": "human"}}
+    check("人类消息不误杀", bot.author_is_bot(object(), "bot") is False)
+    bot.get_raw = orig_raw
     print("[2] 每群冷却")
     orig_cd = bot.random_reply_cooldown
     bot.random_reply_cooldown = bot.Cooldown(999)

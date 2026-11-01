@@ -851,6 +851,24 @@ def media_placeholder(message) -> str:
     return ""
 
 
+def author_is_bot(message, robot_name: str = "") -> bool:
+    """True when a group message was sent by a bot/feed account, not a human.
+
+    Official group payloads may include ``author.bot``; some also expose the
+    sender's username.  We also compare against our own robot name so messages
+    echoed back by the platform never enter the chat context.
+    """
+    raw = get_raw(message)
+    author = raw.get("author") if isinstance(raw, dict) else None
+    if not isinstance(author, dict):
+        return False
+    flag = author.get("bot")
+    if flag is True or str(flag).strip().lower() in ("1", "true", "yes"):
+        return True
+    username = str(author.get("username") or "").strip()
+    return bool(robot_name and username and username == robot_name)
+
+
 def author_display_name(message) -> str:
     """
     群消息发送者的显示名：优先群昵称（card），其次 QQ 昵称（username）。
@@ -2499,13 +2517,27 @@ def group_preamble(message, tag: str, dedup_prefix: str) -> str | None:
     return normalize_incoming(message.content)
 
 
-def should_random_reply(group_openid: str, content: str) -> bool:
+_LOW_INFO_RE = re.compile(
+    "^(?:ok|okay|好|行|嗯|啊|哦|草|？|\\?|…|\\.|。|收到|可以|确实|对|是|嗷|哈+|嘿+|在吗|在不在)$",
+    re.I,
+)
+
+
+def should_random_reply(
+    group_openid: str, content: str, message=None
+) -> bool:
     """群友随机接话：概率（可按群覆盖）+ 每群冷却 + 基本过滤。"""
     p = random_reply.probability(group_openid, RANDOM_REPLY_P)
     if p <= 0:
         return False
     text = (content or "").strip()
     if not text or text.startswith("/"):
+        return False
+    # ???/??????????????????
+    if _LOW_INFO_RE.match(text) or text.startswith("【"):
+        return False
+    # ?????/??????????????
+    if message is not None and quoted_content(message):
         return False
     if not persona.available():
         return False
@@ -3420,6 +3452,9 @@ class MyClient(botpy.Client):
     # 群里被 @ 时触发
     async def on_group_at_message_create(self, message: GroupMessage):
         content = group_preamble(message, "群@", "at")
+        if author_is_bot(message, getattr(getattr(self, "robot", None), "name", "")):
+            log.debug("[群@] ???/feed ??????: %s", getattr(message, "id", ""))
+            return
         if content is None:
             return
 
@@ -3474,6 +3509,9 @@ class MyClient(botpy.Client):
     # 「可选的全量响应」，而是群里 @ 机器人能不能用指令的关键。
     async def on_group_message_create(self, message: GroupMessage):
         content = group_preamble(message, "群全量", "all")
+        if author_is_bot(message, getattr(getattr(self, "robot", None), "name", "")):
+            log.debug("[群全量] ???/feed ??????: %s", getattr(message, "id", ""))
+            return
         if content is None:
             return
 
@@ -3579,7 +3617,7 @@ class MyClient(botpy.Client):
 
         if mentions_others(message):
             log.debug("[随机接话] 这条在 @ 别人，跳过")
-        elif should_random_reply(message.group_openid, content):
+        elif should_random_reply(message.group_openid, content, message):
             log.info(
                 "[随机接话] group=%s p=%.1f%%: %s",
                 message.group_openid[:10],
