@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""每天 12:00 检查明日方舟数值快照是否有上游更新。
+"""每天 12:00 检查明日方舟数值/语音/档案快照是否有上游更新。
 
-只检查、不自动下载 20MB+ 的表：发现上游 character_table / skill_table 的
-commit 变了，就给管理员群发一条提醒，让我们更新 `arkdata.json.gz`。
+只检查、不自动下载 20MB+ 的表：发现上游相关表的 commit 变了，就给管理员群
+发一条提醒，让我们更新 `arkdata.json.gz` / `arklore.json.gz`。
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ import asyncio
 import json
 import logging
 import os
-import time
 import urllib.request
 from datetime import datetime
 
@@ -75,7 +74,7 @@ def _save_json(path: str, data: dict) -> None:
         log.warning("[数值更新] 写状态失败：%s", exc)
 
 
-def _http_json(url: str) -> dict | list:
+def _http_json(url: str):
     req = urllib.request.Request(
         url,
         headers={
@@ -88,7 +87,6 @@ def _http_json(url: str) -> dict | list:
 
 
 def _latest_commit(path: str) -> dict:
-    """取某张表最后一次 commit；网络失败抛异常。"""
     url = (
         f"https://api.github.com/repos/{REPO}/commits"
         f"?path={path}&sha={BRANCH}&per_page=1"
@@ -104,6 +102,14 @@ def _latest_commit(path: str) -> dict:
         "date": (commit.get("committer") or {}).get("date", ""),
         "message": ((commit.get("message") or "").splitlines() or [""])[0][:120],
     }
+
+
+def _snapshot_commits(meta: dict) -> dict[str, str]:
+    stored = meta.get("source_commits")
+    if isinstance(stored, dict) and stored:
+        return {str(k): str(v)[:12] for k, v in stored.items()}
+    fallback = str(meta.get("source_commit") or "")[:12]
+    return {path: fallback for path in PATHS}
 
 
 async def check_once(api, now: datetime | None = None, commits: dict | None = None) -> bool:
@@ -132,35 +138,39 @@ async def check_once(api, now: datetime | None = None, commits: dict | None = No
                 log.warning("[数值更新] 查询 %s 失败：%s", path, exc)
                 commits[path] = {}
 
-    # 同一批资源两张表通常同 commit；取第一个有效的
-    latest = next((c for c in commits.values() if c.get("sha")), {})
-    if not latest:
-        log.warning("[数值更新] 今天没取到上游 commit，明天再试")
-        state["last_checked"] = today
+    meta = _load_json(META_PATH)
+    old = _snapshot_commits(meta)
+    changed = [
+        c for path, c in commits.items()
+        if c.get("sha") and c.get("sha") != (old.get(path) or "")
+    ]
+    state["last_checked"] = today
+    if not changed:
+        log.info("[数值更新] 无更新")
         _save_json(STATE_PATH, state)
         return False
 
-    meta = _load_json(META_PATH)
-    snapshot_sha = (meta.get("source_commit") or "")[:12]
+    changed.sort(key=lambda c: c.get("date") or "", reverse=True)
+    latest = changed[0]
     new_sha = latest.get("sha") or ""
-    state["last_checked"] = today
     state["last_seen"] = new_sha
     _save_json(STATE_PATH, state)
 
-    if snapshot_sha and new_sha == snapshot_sha:
-        log.info("[数值更新] 无更新（%s）", new_sha)
-        return False
     if state.get("last_alerted") == new_sha:
         log.info("[数值更新] 已提醒过 %s，等快照更新", new_sha)
         return False
 
+    detail = "\n".join(
+        f"{c.get('path', '?').split('/')[-1]}: "
+        f"{(old.get(c.get('path')) or '?')} -> {c.get('sha', '?')}"
+        for c in changed
+    )
     text = (
-        "【数值快照】检测到上游数据更新\n"
-        f"当前快照：{snapshot_sha or '未知'}\n"
-        f"上游最新：{new_sha}\n"
+        "【数值/资料快照】检测到上游数据更新\n"
+        f"{detail}\n"
         f"时间：{latest.get('date') or '未知'}\n"
         f"说明：{latest.get('message') or '—'}\n"
-        "当前 arkdata.json.gz 可能缺新干员，请更新快照。"
+        "当前 arkdata.json.gz / arklore.json.gz 可能缺新内容，请更新快照。"
     )
     try:
         await api.post_group_message(group_openid=gid, content=text)

@@ -47,8 +47,13 @@ def write_meta(sha):
 
 def commits(sha):
     return {
-        "excel/character_table.json": {"sha": sha, "date": "2026-11-02T00:00:00Z", "message": "update"},
-        "excel/skill_table.json": {"sha": sha, "date": "2026-11-02T00:00:00Z", "message": "update"},
+        path: {"path": path, "sha": sha, "date": "2026-11-02T00:00:00Z", "message": "update"}
+        for path in (
+            "excel/character_table.json",
+            "excel/skill_table.json",
+            "excel/charword_table.json",
+            "excel/handbook_info_table.json",
+        )
     }
 
 
