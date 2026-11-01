@@ -12,12 +12,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 import time
 
 import group_context
+import meme
 import memory_store
 import persona
 import sensitive
@@ -208,6 +210,77 @@ async def learn_all(
     return total_slang, total_imps
 
 
+async def learn_memes(
+    gctx: group_context.GroupContextStore,
+    mem: memory_store.MemoryStore,
+    lookback_minutes: float = 240.0,
+    max_groups: int = 5,
+    max_terms: int = 2,
+    max_total: int = 2,
+    min_confidence: float = 0.75,
+) -> int:
+    """把本群已学到的自动黑话拿去联网核实，补进全局梗库。
+
+    只在后台跑，不在 `/黑话 学` 这种命令里联网，避免管理员等太久。
+    每轮最多尝试 max_total 个词；被模型判定「不是梗」的词进 30 天拒绝缓存，
+    不会每轮反复烧搜索额度。
+    """
+    if not meme.auto_enabled():
+        return 0
+    groups = await gctx.active_groups(lookback_minutes)
+    total = 0
+    attempts = 0
+    blocked = False
+    for gid in groups[:max_groups]:
+        if blocked or attempts >= max_total:
+            break
+        scope = f"group:{gid}"
+        try:
+            rows = await mem.list_slang(scope, 30)
+        except Exception:  # noqa: BLE001
+            continue
+        picked = 0
+        for row in rows:
+            if attempts >= max_total or picked >= max_terms:
+                break
+            if row.get("source") != "auto":
+                continue
+            try:
+                conf = float(row.get("confidence") or 0)
+            except (TypeError, ValueError):
+                conf = 0.0
+            if conf < min_confidence:
+                continue
+            term = (row.get("term") or "").strip()
+            if not term or len(term) < 3:
+                # 两字词太多普通词（舒服/跑路/六星），后台自动查容易污染梗库；
+                # 用户主动 /梗 查 不受这个限制。
+                continue
+            try:
+                if await meme.has(term) or await meme.is_rejected(term):
+                    continue
+                if not meme.can_research(scope):
+                    # 撞上全局冷却：等一轮再试，避免把后面的词全撞掉
+                    await asyncio.sleep(9.0)
+                    if not meme.can_research(scope):
+                        blocked = True
+                        break
+                entry = await meme.research(
+                    term, hint=row.get("meaning") or "", scope=scope
+                )
+                attempts += 1
+            except Exception as exc:  # noqa: BLE001
+                log.warning("[学习] 查梗 %s 失败：%s", term, exc)
+                attempts += 1
+                continue
+            if entry:
+                total += 1
+                picked += 1
+    if total:
+        log.info("[学习] 联网补梗 %d 条（尝试 %d 个）", total, attempts)
+    return total
+
+
 async def poll_loop(
     gctx: group_context.GroupContextStore,
     mem: memory_store.MemoryStore,
@@ -215,14 +288,13 @@ async def poll_loop(
     max_groups: int = 5,
 ) -> None:
     """后台自动学习：先跑一轮，再按间隔循环。"""
-    import asyncio
-
     interval = max(60.0, float(minutes) * 60.0)
     while True:
         try:
             s, i = await learn_all(gctx, mem, max_groups=max_groups)
-            if s or i:
-                log.info("[学习] 本轮：黑话 %d 条，人物印象 %d 人", s, i)
+            m = await learn_memes(gctx, mem, max_groups=max_groups)
+            if s or i or m:
+                log.info("[学习] 本轮：黑话 %d 条，人物印象 %d 人，联网补梗 %d 条", s, i, m)
         except Exception as exc:  # noqa: BLE001
             log.warning("[学习] 本轮失败：%s", exc)
         await asyncio.sleep(interval)

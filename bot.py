@@ -36,6 +36,7 @@ import group_context
 import help_image
 import kb
 import learning
+import meme
 import memory_store
 import names
 import notices
@@ -410,6 +411,7 @@ HELP_TEXT = (
     "【记忆】/叫我 名字　让本机记住你的称呼\n"
     "　　　/黑话 [词]　查本群黑话　/黑话 添加 词 解释（管理员）\n"
     "　　　/印象　看本机对你的印象\n"
+    "【梗库】/梗 查 词　联网查梗并记下；/梗　看最近收录　更多用法：/help 梗\n"
     "【接话】/接话 [5%|0.03|关|默认]　调整本群随机接话概率\n"
     "\n"
     "【收藏】/添加 关键词…　引用一张图片后回复；同消息附图须带「/」\n"
@@ -449,6 +451,9 @@ ADMIN_HELP_TEXT = (
     "　/印象 记 内容　手写一条对自己的印象\n"
     "　/印象 学　从最近群聊自动总结人物印象\n"
     "　/印象 清　清空本群所有印象\n"
+    "　/梗 学 词　强制联网重查并更新梗库\n"
+    "　/梗 添加 词 解释　手写梗条目\n"
+    "　/梗 删 词　删除梗条目\n"
     "　/用量 [天数]　模型调用/费用汇总（默认今天）\n"
     "　/取消关联 关键词　解关联；删除仅剩的最后一个词\n"
     "　/管理员 <口令>　（私聊）登记管理员\n"
@@ -507,6 +512,23 @@ HELP_TOPICS = {
         "\n"
         "开启后，对应游戏有新版本/公告时我会自动推到本群。"
     ),
+    "梗": (
+        "【梗库 · 完整用法】\n"
+        "\n"
+        "查梗：/梗 查 词　（也可以直接 /梗 词）\n"
+        "　　　本地没有就联网查，查到会存进全局梗库，之后各群都能用；\n"
+        "　　　查不到会明说，不拿旧知识硬编。\n"
+        "看库：/梗　列出最近收录的词条\n"
+        "来源：/梗 来源 词　看整理来源、置信度和更新时间\n"
+        "\n"
+        "管理员：\n"
+        "　/梗 学 词　强制联网重查并覆盖自动条目\n"
+        "　/梗 添加 词 解释　手写一条；手写条目不会被自动结果覆盖\n"
+        "　/梗 删 词　删除词条\n"
+        "\n"
+        "聊天里问「X 是什么梗」时，本机会先查梗库；没有就联网搜，并把结果\n"
+        "在后台整理成词条。后台学黑话时也会挑把握较大的词去联网核实。"
+    ),
     "名片": (
         "【游戏名片 · 完整用法】\n"
         "\n"
@@ -528,6 +550,8 @@ HELP_TOPIC_ALIASES = {
     "收藏": "图库",
     "推送": "公告",
     "游戏名片": "名片",
+    "梗库": "梗",
+    "查梗": "梗",
 }
 
 
@@ -569,6 +593,7 @@ WHOAMI_RE = re.compile(r"^/查询标识\b\s*(.*)$", re.DOTALL)
 # 记忆：称呼 / 黑话 / 印象（都要求带斜杠，避免和普通聊天混淆）
 CALL_ME_RE = re.compile(r"^/叫我\s+(.{1,16})$", re.DOTALL)
 SLANG_RE = re.compile(r"^/黑话(?:\s+(.*))?$", re.DOTALL)
+MEME_RE = re.compile(r"^/梗(?:\s+(.*))?$", re.DOTALL)
 IMPRESSION_RE = re.compile(r"^/印象(?:\s+(.*))?$", re.DOTALL)
 USAGE_RE = re.compile(r"^/用量(?:\s+(\d{1,3}))?$", re.DOTALL)
 
@@ -2632,6 +2657,17 @@ SUMMARY_PROMPT = (
 )
 
 _summary_tasks: set[str] = set()
+_meme_tasks: set = set()
+
+
+async def _learn_meme_bg(question: str, summary: str, scope: str) -> None:
+    """后台把联网摘要整理成梗库词条；失败只记日志，不影响回复。"""
+    try:
+        entry = await meme.learn_from_summary(question, summary, scope)
+        if entry:
+            log.info("[梗库] 对话学到 %s：%s", entry["term"], entry["meaning"][:40])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[梗库] 对话学习失败：%s", exc)
 
 
 async def _summarize_scope(scope: str) -> None:
@@ -2841,8 +2877,20 @@ async def persona_reply(
         kb_ctx = kb.context(content)
         if kb_ctx:
             model_text = kb_ctx + model_text
+    # 全局梗库：只读本地已收录的，联网查梗走 /梗 查 或下面的搜索分支
+    meme_ctx = ""
+    if content and content != IMAGE_ONLY_PLACEHOLDER:
+        meme_text = content + (("\n" + quote) if quote else "")
+        try:
+            meme_ctx = await asyncio.to_thread(meme.render, meme_text)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[梗库] 读取失败：%s", exc)
+        if meme_ctx:
+            model_text = meme_ctx + model_text
+            log.info("[梗库] 已注入 %d 字：%s", len(meme_ctx), content[:30])
     # 联网搜索（两步式）：命中时效性/事实类提问才搜；只把「事实摘要」注入，不塞检索原文。
     # 带图/视频的「这是谁」不搜：图和打标/KB 更直接，搜一句「这是谁」纯浪费。
+    meme_question = bool(meme_ctx and meme.question_term(content))
     search_should = bool(
         content
         and content != IMAGE_ONLY_PLACEHOLDER
@@ -2852,15 +2900,22 @@ async def persona_reply(
         and not lore_ctx
         and not penguin_ctx
         and not enemy_ctx
+        and not meme_question
         and websearch.should_search(content)
     )
-    # 有知识库/数值/资料/掉率/敌人档案/联网事实时降低温度，优先准确，少点自由发挥
-    factual = bool(penguin_ctx or ark_ctx or lore_ctx or enemy_ctx or kb_ctx or search_should)
+    # 有知识库/数值/资料/掉率/敌人档案/梗库/联网事实时降低温度，优先准确，少点自由发挥
+    factual = bool(
+        penguin_ctx or ark_ctx or lore_ctx or enemy_ctx or kb_ctx or meme_ctx or search_should
+    )
     if search_should:
         summary = await asyncio.to_thread(websearch.search, content)
         if summary:
             model_text = websearch.wrap(summary) + model_text
             log.info("[websearch] injected %d chars: %s", len(summary), content[:30])
+            if meme.question_term(content):
+                task = asyncio.create_task(_learn_meme_bg(content, summary, scope))
+                _meme_tasks.add(task)
+                task.add_done_callback(_meme_tasks.discard)
         else:
             log.info("[websearch] no result: %s", content[:30])
     # 群聊背景：把最近没 @ 机器人的群消息也喂给模型（只作背景，不主动回复）。
@@ -3200,6 +3255,105 @@ async def do_slang(message, scope: str, text: str) -> None:
     await message.reply(content=f"{arg}：{row['meaning']}（{tag}）")
 
 
+async def do_meme(message, scope: str, text: str) -> None:
+    """/梗：查梗、看梗库、管理员手写/删除/强制联网重查。"""
+    match = MEME_RE.match(text)
+    arg = ((match.group(1) if match else "") or "").strip()
+    admin = await store.is_admin(author_openid(message))
+
+    def fmt(row: dict, detail: bool = False) -> str:
+        line = f"{row['term']}：{row['meaning']}"
+        origin = (row.get("origin") or "").strip()
+        usage = (row.get("usage") or "").strip()
+        if origin:
+            line += f"\n出处：{origin}"
+        if usage:
+            line += f"\n用法：{usage}"
+        if detail:
+            source = {"manual": "手写", "web": "联网整理", "chat": "对话整理"}.get(
+                row.get("source") or "", row.get("source") or "未知"
+            )
+            stamp = time.strftime("%Y-%m-%d", time.localtime(row.get("updated_at") or 0))
+            line += (
+                f"\n来源：{source}｜置信度 {float(row.get('confidence') or 0):.2f}"
+                f"｜更新 {stamp}"
+            )
+        return line
+
+    if not arg:
+        rows = await meme.list_recent(20)
+        if not rows:
+            await message.reply(
+                content="梗库还是空的。发 /梗 查 词 让我联网查一条，管理员也可以 /梗 添加 词 解释。"
+            )
+            return
+        lines = [f"{r['term']}={r['meaning'][:40]}" for r in rows]
+        await message.reply(content=f"梗库最近 {len(rows)} 条：\n" + "\n".join(lines))
+        return
+
+    if arg.startswith("添加 "):
+        if not admin:
+            await message.reply(content="只有管理员能手写梗条目。")
+            return
+        rest = arg[3:].strip()
+        parts = rest.split(maxsplit=1)
+        if len(parts) != 2:
+            await message.reply(content="用法：/梗 添加 词 解释")
+            return
+        term, meaning = parts[0].strip(), parts[1].strip()
+        ok = await meme.add_manual(term, meaning)
+        await message.reply(
+            content=f"记下了：{term}。以后聊天里出现会带上这条解释。"
+            if ok else "没记下：词或解释太短，或内容不合适。"
+        )
+        return
+
+    if arg.startswith("删 "):
+        if not admin:
+            await message.reply(content="只有管理员能删梗条目。")
+            return
+        term = arg[2:].strip()
+        ok = await meme.delete(term)
+        await message.reply(content=f"删掉了：{term}" if ok else f"没找到：{term}")
+        return
+
+    if arg.startswith("来源 "):
+        term = arg[3:].strip()
+        row = await meme.get(term)
+        if not row:
+            await message.reply(content=f"梗库里没有「{term}」。")
+            return
+        await message.reply(content=fmt(row, detail=True))
+        return
+
+    if arg.startswith("学 "):
+        if not admin:
+            await message.reply(content="只有管理员能让本机强制联网重查。")
+            return
+        term = arg[2:].strip()
+        entry = await meme.research(term, scope=scope, force=True)
+        if entry:
+            await message.reply(content="重查完成：\n" + fmt(entry, detail=True))
+        else:
+            await message.reply(content=f"没查到「{term}」的可靠出处，先不编。")
+        return
+
+    if arg.startswith("查 "):
+        arg = arg[2:].strip()
+
+    row = await meme.get(arg)
+    if row:
+        await message.reply(content=fmt(row))
+        return
+    entry = await meme.research(arg, scope=scope)
+    if entry:
+        await message.reply(content=fmt(entry))
+    else:
+        await message.reply(
+            content=f"没查到「{arg}」的可靠出处，先不编。管理员可以 /梗 添加 词 解释 手写。"
+        )
+
+
 async def do_impression(message, scope: str, text: str) -> None:
     match = IMPRESSION_RE.match(text)
     arg = ((match.group(1) if match else "") or "").strip()
@@ -3343,6 +3497,10 @@ async def handle_command(message, api, scope: str, scene_id: str, content: str) 
 
     if SLANG_RE.match(text):
         await do_slang(message, store_scope, text)
+        return True
+
+    if MEME_RE.match(text):
+        await do_meme(message, store_scope, text)
         return True
 
     if IMPRESSION_RE.match(text):
