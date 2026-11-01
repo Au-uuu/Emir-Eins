@@ -29,6 +29,8 @@ data = {
                 ]},
             ],
             "favor": {"atk": 90},
+            "talents": [{"name": "绝不妥协", "desc": "造成法术伤害时附带灼燃损伤"}],
+            "modules": [{"name": "测试模组", "type": "LOR", "stats": {"max_hp": 330, "atk": 70}}],
             "skills": [
                 {"i": 1, "name": "照霎白夜", "spCost": 8, "initSp": 0, "duration": -1},
                 {"i": 2, "name": "阂断骤雪", "spCost": 7, "initSp": 21, "duration": 0},
@@ -74,6 +76,10 @@ def main() -> int:
 
     text = arkdata.context("塔露拉面板")
     check("面板命中", "攻击 965" in text and "防御 425" in text and "阻挡 2" in text, text)
+    text_t = arkdata.context("塔露拉天赋")
+    check("天赋命中", "天赋·绝不妥协" in text_t, text_t)
+    text_m = arkdata.context("塔露拉模组")
+    check("模组命中", "模组·测试模组" in text_m and "生命 330" in text_m, text_m)
     text50 = arkdata.context("塔露拉精二50面板")
     check("等级插值", "生命 2688" in text50 and "攻击 906" in text50, text50)
 

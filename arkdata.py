@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""本地干员数值快照：技能数值 + 按等级插值的面板。
+"""本地干员数值快照：技能、面板、天赋、模组。
 
 数据来源：PRTS / ArknightsGamedata 的离线快照（`data/arkdata.json.gz`）。
-面板按游戏数据的等级关键帧线性插值；默认「精二 90 级、满信赖、无潜能」。
+面板按等级关键帧线性插值；默认「精二 90 级、满信赖、无潜能」。
 查不到就返回空串，交给联网或让模型直说没查到，绝不凭记忆编数字。
 """
 
@@ -26,13 +26,15 @@ _lock = threading.Lock()
 
 _INTENT_RE = re.compile(
     r"技能|sp|技力|回转|初动|持续|冷却|倍率|数值|面板|专三|专精|多少|多久|几秒|"
-    r"攻击力|防御力|生命值|生命|血量|法抗|阻挡|再部署|费用|攻击间隔|满级|精[一二三]",
+    r"攻击力|防御力|生命值|生命|血量|法抗|阻挡|再部署|费用|攻击间隔|满级|精[一二三]|天赋|模组|模块",
     re.I,
 )
 _SKILL_NO_RE = re.compile(r"([123一二三])\s*技能")
 _SKILL_NO = {"1": 1, "一": 1, "2": 2, "二": 2, "3": 3, "三": 3}
 _PANEL_RE = re.compile(r"面板|攻击|防御|生命|血量|法抗|阻挡|费用|再部署|攻击间隔|满级|精[一二三]")
 _SKILL_RE = re.compile(r"技能|sp|技力|回转|初动|持续|冷却|专三|专精", re.I)
+_TALENT_RE = re.compile(r"天赋")
+_MODULE_RE = re.compile(r"模组|模块")
 _ELITE_RE = re.compile(r"精(?:英)?\s*([一二三012])\s*(\d{1,3})?")
 _LEVEL_RE = re.compile(r"(\d{1,3})\s*级")
 _ELITE_MAP = {"0": 0, "一": 1, "1": 1, "二": 2, "2": 2, "三": 3, "3": 3}
@@ -145,6 +147,23 @@ def _panel_line(op: dict, elite: int, level: int | None, trust: int) -> str:
     return f"精{['零', '一', '二', '三'][phase]} {lv} 级｜{trust_text}：" + "；".join(parts)
 
 
+def _module_line(module: dict) -> str:
+    name = (module.get("name") or "").strip()
+    type_name = (module.get("type") or "").strip() or "模组"
+    stats = module.get("stats") or {}
+    labels = (
+        ("max_hp", "生命"), ("atk", "攻击"), ("def", "防御"),
+        ("magic_resistance", "法抗"), ("attack_speed", "攻速"),
+        ("block_cnt", "阻挡"), ("cost", "费用"), ("respawn_time", "再部署"),
+    )
+    parts = [
+        f"{label} {_fmt_num(stats[key])}"
+        for key, label in labels if stats.get(key) is not None
+    ]
+    suffix = "；" + "；".join(parts) if parts else ""
+    return f"模组·{name}（{type_name}）{suffix}"
+
+
 def context(text: str) -> str:
     """命中干员名 + 数值意图时返回可直接注入的事实块；否则空串。"""
     text = (text or "").strip()
@@ -160,6 +179,8 @@ def context(text: str) -> str:
     skill_no = _SKILL_NO.get(m.group(1)) if m else None
     want_panel = bool(_PANEL_RE.search(text))
     want_skill = bool(_SKILL_RE.search(text) or skill_no)
+    want_talent = bool(_TALENT_RE.search(text))
+    want_module = bool(_MODULE_RE.search(text))
     elite, level = _level_request(text)
     trust = 0 if _TRUST_RE.search(text) else 100
 
@@ -176,6 +197,17 @@ def context(text: str) -> str:
                 line = _panel_line(op, elite, level, trust)
                 if line:
                     lines.append(line)
+            if want_talent:
+                for talent in op.get("talents") or []:
+                    name_t = (talent.get("name") or "").strip()
+                    desc_t = (talent.get("desc") or "").strip()
+                    if name_t:
+                        lines.append(f"天赋·{name_t}：{desc_t}")
+            if want_module:
+                for module in op.get("modules") or []:
+                    line = _module_line(module)
+                    if line:
+                        lines.append(line)
             if not want_skill:
                 continue
             for skill in op.get("skills") or []:

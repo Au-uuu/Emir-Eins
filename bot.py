@@ -28,6 +28,7 @@ from dotenv import load_dotenv
 import ark_news
 import arkdata
 import arkdata_update
+import arkenemy
 import arklore
 import fortune
 import group_context
@@ -37,6 +38,7 @@ import learning
 import memory_store
 import names
 import notices
+import penguin
 import persona
 import random_reply
 import r6stats
@@ -2771,6 +2773,26 @@ async def persona_reply(
     quote = quoted_content(message)
     if quote:
         model_text = f"（用户引用了下面这条消息提问：\n{quote}\n）\n{content}"
+    # 材料掉率：先查企鹅物流，命中就不让模型凭印象说“去哪刷”
+    penguin_ctx = ""
+    if content and content != IMAGE_ONLY_PLACEHOLDER:
+        try:
+            penguin_ctx = await asyncio.to_thread(penguin.context, content)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[材料] 查询失败：%s", exc)
+        if penguin_ctx:
+            model_text = penguin_ctx + model_text
+            log.info("[材料] 已注入 %d 字：%s", len(penguin_ctx), content[:30])
+    # 敌人档案：按敌人名查本地快照
+    enemy_ctx = ""
+    if content and content != IMAGE_ONLY_PLACEHOLDER:
+        try:
+            enemy_ctx = await asyncio.to_thread(arkenemy.context, content)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[敌人] 查询失败：%s", exc)
+        if enemy_ctx:
+            model_text = enemy_ctx + model_text
+            log.info("[敌人] 已注入 %d 字：%s", len(enemy_ctx), content[:30])
     # 明日方舟干员数值：先查本地 PRTS 快照，命中就不让模型凭记忆报数字
     ark_ctx = ""
     if content and content != IMAGE_ONLY_PLACEHOLDER:
@@ -2806,10 +2828,12 @@ async def persona_reply(
         and not kb_ctx
         and not ark_ctx
         and not lore_ctx
+        and not penguin_ctx
+        and not enemy_ctx
         and websearch.should_search(content)
     )
-    # 有知识库/数值/资料/联网事实时降低温度，优先准确，少点自由发挥
-    factual = bool(ark_ctx or lore_ctx or kb_ctx or search_should)
+    # 有知识库/数值/资料/掉率/敌人档案/联网事实时降低温度，优先准确，少点自由发挥
+    factual = bool(penguin_ctx or ark_ctx or lore_ctx or enemy_ctx or kb_ctx or search_should)
     if search_should:
         summary = await asyncio.to_thread(websearch.search, content)
         if summary:
