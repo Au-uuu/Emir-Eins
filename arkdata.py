@@ -161,6 +161,9 @@ def _module_line(module: dict) -> str:
         for key, label in labels if stats.get(key) is not None
     ]
     suffix = "；" + "；".join(parts) if parts else ""
+    effect = (module.get("effect") or "").strip()
+    if effect:
+        suffix += f"；效果：{effect[:300]}"
     return f"模组·{name}（{type_name}）{suffix}"
 
 
