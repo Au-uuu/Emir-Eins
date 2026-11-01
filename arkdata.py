@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""本地干员数值快照：回答明日方舟技能 SP/初动/持续等硬数据。
+"""本地干员数值快照：回答明日方舟技能/面板硬数据。
 
 数据来源：PRTS / ArknightsGamedata 的离线快照（`data/arkdata.json.gz`）。
 只负责“数值查表”，不负责人格与措辞；查不到就返回空串，交给联网搜索或
@@ -24,14 +24,15 @@ _data: dict[str, list[dict]] | None = None
 _names: list[str] = []
 _lock = threading.Lock()
 
-# 只有问到“数值/技能”时才查表，避免“我喜欢塔露拉”也被塞一段技能说明
 _INTENT_RE = re.compile(
     r"技能|sp|技力|回转|初动|持续|冷却|倍率|数值|面板|专三|专精|多少|多久|几秒|"
-    r"攻击力|防御力|生命值|法抗|阻挡|再部署|部署费用",
+    r"攻击力|防御力|生命值|生命|血量|法抗|阻挡|再部署|费用|攻击间隔",
     re.I,
 )
 _SKILL_NO_RE = re.compile(r"([123一二三])\s*技能")
 _SKILL_NO = {"1": 1, "一": 1, "2": 2, "二": 2, "3": 3, "三": 3}
+_PANEL_RE = re.compile(r"面板|攻击|防御|生命|血量|法抗|阻挡|费用|再部署|攻击间隔")
+_SKILL_RE = re.compile(r"技能|sp|技力|回转|初动|持续|冷却|专三|专精", re.I)
 
 
 def _path() -> str:
@@ -66,6 +67,22 @@ def _fmt_num(value) -> str:
     return str(int(num)) if num == int(num) else f"{num:g}"
 
 
+def _panel_line(panel: dict) -> str:
+    labels = (
+        ("maxHp", "生命"), ("atk", "攻击"), ("def", "防御"),
+        ("magicResistance", "法抗"), ("blockCnt", "阻挡"),
+        ("cost", "部署费用"), ("baseAttackTime", "攻击间隔"),
+        ("respawnTime", "再部署"),
+    )
+    parts = []
+    for key, label in labels:
+        if panel.get(key) is None:
+            continue
+        suffix = " 秒" if key in ("baseAttackTime", "respawnTime") else ""
+        parts.append(f"{label} {_fmt_num(panel[key])}{suffix}")
+    return "精英2满级：" + "；".join(parts) if parts else ""
+
+
 def context(text: str) -> str:
     """命中干员名 + 数值意图时返回可直接注入的事实块；否则空串。"""
     text = (text or "").strip()
@@ -80,13 +97,24 @@ def context(text: str) -> str:
         return ""
     m = _SKILL_NO_RE.search(text)
     skill_no = _SKILL_NO.get(m.group(1)) if m else None
+    want_panel = bool(_PANEL_RE.search(text))
+    want_skill = bool(_SKILL_RE.search(text) or skill_no)
 
     lines: list[str] = []
     for name in hits[:2]:
         for op in data.get(name, []):
             en = (op.get("en") or "").strip()
+            cls = (op.get("class") or "").strip()
             head = f"{name}（{en}）" if en and en != name else name
+            if cls:
+                head += f"·{cls}"
             lines.append(head)
+            if want_panel:
+                line = _panel_line(op.get("panel") or {})
+                if line:
+                    lines.append(line)
+            if not want_skill:
+                continue
             for skill in op.get("skills") or []:
                 if skill_no and int(skill.get("i") or 0) != skill_no:
                     continue
@@ -102,6 +130,6 @@ def context(text: str) -> str:
                     else:
                         parts.append(f"持续 {_fmt_num(duration)} 秒")
                 lines.append("；".join(parts))
-    if not lines:
+    if len(lines) <= 1:
         return ""
     return "【角色数值（PRTS 快照）】\n" + "\n".join(lines) + "\n"

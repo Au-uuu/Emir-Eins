@@ -17,6 +17,8 @@ data = {
         {
             "id": "char_4247_oxi",
             "en": "Talulah",
+            "class": "近卫",
+            "panel": {"maxHp": 2910, "atk": 875, "def": 425, "magicResistance": 10, "blockCnt": 2, "cost": 23, "baseAttackTime": 1.2, "respawnTime": 70},
             "skills": [
                 {"i": 1, "name": "照霎白夜", "spCost": 8, "initSp": 0, "duration": -1},
                 {"i": 2, "name": "阂断骤雪", "spCost": 7, "initSp": 21, "duration": 0},
@@ -59,6 +61,9 @@ def main() -> int:
     check("SP 45", "SP 45" in text, text)
     check("初始 SP 38", "初始 SP 38" in text, text)
     check("持续 36", "持续 36" in text, text)
+
+    text = arkdata.context("塔露拉攻击力防御阻挡")
+    check("面板命中", "攻击 875" in text and "防御 425" in text and "阻挡 2" in text, text)
 
     print("[2] 意图过滤")
     check("闲聊不注入", arkdata.context("塔露拉好帅") == "")
