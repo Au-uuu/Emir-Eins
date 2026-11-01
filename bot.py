@@ -26,6 +26,7 @@ from botpy.message import C2CMessage, GroupMessage
 from dotenv import load_dotenv
 
 import ark_news
+import arkdata
 import fortune
 import group_context
 import help_image
@@ -2768,7 +2769,18 @@ async def persona_reply(
     quote = quoted_content(message)
     if quote:
         model_text = f"（用户引用了下面这条消息提问：\n{quote}\n）\n{content}"
+    # 明日方舟干员数值：先查本地 PRTS 快照，命中就不让模型凭记忆报数字
+    ark_ctx = ""
+    if content and content != IMAGE_ONLY_PLACEHOLDER:
+        try:
+            ark_ctx = await asyncio.to_thread(arkdata.context, content)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[数值] 查询失败：%s", exc)
+        if ark_ctx:
+            model_text = ark_ctx + model_text
+            log.info("[数值] 已注入 %d 字：%s", len(ark_ctx), content[:30])
     # 本地知识库检索（RAG，轻量 BM25）：命中就拼进提示词，让事实更准
+    kb_ctx = ""
     if content and content != IMAGE_ONLY_PLACEHOLDER:
         kb_ctx = kb.context(content)
         if kb_ctx:
@@ -2779,14 +2791,16 @@ async def persona_reply(
         content
         and content != IMAGE_ONLY_PLACEHOLDER
         and not media
+        and not kb_ctx
+        and not ark_ctx
         and websearch.should_search(content)
     ):
         summary = await asyncio.to_thread(websearch.search, content)
         if summary:
             model_text = websearch.wrap(summary) + model_text
-            log.info("[??] ??? %d ??%s", len(summary), content[:30])
+            log.info("[websearch] injected %d chars: %s", len(summary), content[:30])
         else:
-            log.info("[??] ??????????%s", content[:30])
+            log.info("[websearch] no result: %s", content[:30])
     # 群聊背景：把最近没 @ 机器人的群消息也喂给模型（只作背景，不主动回复）。
     # 排除当前这条（正文已单独传了），避免同一句话出现两次。
     ctx = ""
