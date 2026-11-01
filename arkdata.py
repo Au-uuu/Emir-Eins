@@ -94,7 +94,7 @@ def context(text: str) -> str:
                 if skill.get("spCost") is not None:
                     parts.append(f"SP {_fmt_num(skill['spCost'])}")
                 if skill.get("initSp") is not None:
-                    parts.append(f"初动 {_fmt_num(skill['initSp'])} 秒")
+                    parts.append(f"初始 SP {_fmt_num(skill['initSp'])}")
                 duration = skill.get("duration")
                 if duration is not None:
                     if float(duration) < 0:

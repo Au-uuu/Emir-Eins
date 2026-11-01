@@ -57,7 +57,7 @@ def main() -> int:
     check("命中塔露拉", "塔露拉" in text, text)
     check("只给三技能", "日冕重烈" in text and "照霎白夜" not in text, text)
     check("SP 45", "SP 45" in text, text)
-    check("初动 38", "初动 38" in text, text)
+    check("初始 SP 38", "初始 SP 38" in text, text)
     check("持续 36", "持续 36" in text, text)
 
     print("[2] 意图过滤")
