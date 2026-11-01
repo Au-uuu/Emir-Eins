@@ -164,13 +164,13 @@ async def main() -> int:
     bot.chat_cooldown.seconds = 0
     persona.available = lambda: True
 
-    async def ok_generate(history, text, session=""):
+    async def ok_generate(history, text, session="", temperature=0.8):
         return f"【回答】收到「{text}」上下文{len(history)}条"
 
-    async def none_generate(history, text, session=""):
+    async def none_generate(history, text, session="", temperature=0.8):
         return None
 
-    async def bad_generate(history, text, session=""):
+    async def bad_generate(history, text, session="", temperature=0.8):
         return "这条回复里有测试敏感词"
 
     persona.generate = ok_generate
@@ -416,7 +416,7 @@ async def main() -> int:
         seen["history"], seen["text"], seen["images"] = history, text, images
         return "【看图】我看到了"
 
-    async def fail_generate(history, text, session=""):
+    async def fail_generate(history, text, session="", temperature=0.8):
         raise AssertionError("带图消息不该走纯文本模型")
 
     persona.available = lambda: True
@@ -499,7 +499,7 @@ async def main() -> int:
         desc_seen["images"], desc_seen["video"], desc_seen["hint"] = images, video_url, hint_text
         return "图中是初音未来（蓝绿双马尾），坐在栏杆上。"
 
-    async def fake_generate(history, text, session=""):
+    async def fake_generate(history, text, session="", temperature=0.8):
         desc_seen["text"] = text
         return "【分析】检测到初音未来。【肯定】本机也在。"
 
@@ -696,7 +696,7 @@ async def main() -> int:
 
     persona.vision_enabled = lambda: False
 
-    async def text_cap(history, text, session=""):
+    async def text_cap(history, text, session="", temperature=0.8):
         cap["text2"] = text
         return "【回答】好的"
 

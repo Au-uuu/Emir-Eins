@@ -91,7 +91,7 @@ async def main() -> int:
     print("[3] 随机接话注入上下文 + 画像 + 主动提示")
     seen = {}
 
-    async def fake_generate(history, text, session=""):
+    async def fake_generate(history, text, session="", temperature=0.8):
         seen["text"] = text
         return "【考察】排位可以，本机负责赢。"
 

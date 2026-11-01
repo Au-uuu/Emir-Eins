@@ -2787,14 +2787,17 @@ async def persona_reply(
             model_text = kb_ctx + model_text
     # 联网搜索（两步式）：命中时效性/事实类提问才搜；只把「事实摘要」注入，不塞检索原文。
     # 带图/视频的「这是谁」不搜：图和打标/KB 更直接，搜一句「这是谁」纯浪费。
-    if (
+    search_should = bool(
         content
         and content != IMAGE_ONLY_PLACEHOLDER
         and not media
         and not kb_ctx
         and not ark_ctx
         and websearch.should_search(content)
-    ):
+    )
+    # 有知识库/数值/联网事实时降低温度，优先准确，少点自由发挥
+    factual = bool(ark_ctx or kb_ctx or search_should)
+    if search_should:
         summary = await asyncio.to_thread(websearch.search, content)
         if summary:
             model_text = websearch.wrap(summary) + model_text
@@ -2863,7 +2866,7 @@ async def persona_reply(
             model_text = f"（视觉模型对这条内容的客观描述：\n{desc}\n）\n" + model_text
             if media_note:
                 model_text = media_note + "\n" + model_text
-            reply = await persona.generate(history, model_text, scope)
+            reply = await persona.generate(history, model_text, scope, temperature=0.5 if factual else 0.8)
         elif images:
             # 描述失败：退回单次视觉调用（仍带打标线索 + 媒体说明）
             if hints:
@@ -2872,7 +2875,7 @@ async def persona_reply(
                 model_text = media_note + "\n" + model_text
             reply = await persona.generate_vision(history, model_text, images, scope)
         else:
-            reply = await persona.generate(history, model_text, scope)
+            reply = await persona.generate(history, model_text, scope, temperature=0.5 if factual else 0.8)
     elif images:
         if hints:
             model_text = hints + model_text
@@ -2880,7 +2883,7 @@ async def persona_reply(
             model_text = media_note + "\n" + model_text
         reply = await persona.generate_vision(history, model_text, images, scope)
     else:
-        reply = await persona.generate(history, model_text, scope)
+        reply = await persona.generate(history, model_text, scope, temperature=0.5 if factual else 0.8)
     if not reply:
         log.info("[人格] 本轮无回复: scope=%s", scope)
         if image_only:

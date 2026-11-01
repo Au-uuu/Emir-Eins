@@ -302,7 +302,9 @@ def available() -> bool:
 # ---------------- 生成 ----------------
 
 
-async def generate(history: list[dict], text: str, session: str = "") -> str | None:
+async def generate(
+    history: list[dict], text: str, session: str = "", temperature: float = 0.8
+) -> str | None:
     """生成一句回复。失败（网络/超时/内容安全拦截）一律返回 None，由调用方静默。"""
     text = (text or "").strip()
     if not text:
@@ -312,7 +314,8 @@ async def generate(history: list[dict], text: str, session: str = "") -> str | N
     if not prompt or not key:
         return None
     return await _request_with_retry(
-        prompt, key, history, text, None, None, session, kind="text"
+        prompt, key, history, text, None, None, session,
+        temperature=temperature, kind="text",
     )
 
 
