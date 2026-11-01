@@ -3348,9 +3348,15 @@ async def do_meme(message, scope: str, text: str) -> None:
     entry = await meme.research(arg, scope=scope)
     if entry:
         await message.reply(content=fmt(entry))
+    elif await meme.is_rejected(arg):
+        await message.reply(
+            content=f"「{arg}」之前查过，模型判断不是梗或把握不足，没入库。"
+            "管理员可以 /梗 学 词 强制重查，或 /梗 添加 词 解释 手写。"
+        )
     else:
         await message.reply(
-            content=f"没查到「{arg}」的可靠出处，先不编。管理员可以 /梗 添加 词 解释 手写。"
+            content=f"没查到「{arg}」的可靠出处（也可能刚查过、还在冷却），稍等再试；"
+            "管理员可以 /梗 添加 词 解释 手写。"
         )
 
 
