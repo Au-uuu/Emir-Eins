@@ -2,7 +2,7 @@
 """每天 12:00 检查明日方舟数值/语音/档案快照是否有上游更新。
 
 只检查、不自动下载 20MB+ 的表：发现上游相关表的 commit 变了，就给管理员群
-发一条提醒，让我们更新 `arkdata.json.gz` / `arklore.json.gz`。
+发一条提醒，让我们更新 `arkdata.json.gz` / `arklore.json.gz` / `arkenemy.json.gz`。
 """
 
 from __future__ import annotations
@@ -28,6 +28,9 @@ PATHS = (
     "excel/skill_table.json",
     "excel/charword_table.json",
     "excel/handbook_info_table.json",
+    "excel/uniequip_table.json",
+    "excel/battle_equip_table.json",
+    "excel/enemy_handbook_table.json",
 )
 CHECK_SECONDS = 300.0
 
@@ -170,7 +173,7 @@ async def check_once(api, now: datetime | None = None, commits: dict | None = No
         f"{detail}\n"
         f"时间：{latest.get('date') or '未知'}\n"
         f"说明：{latest.get('message') or '—'}\n"
-        "当前 arkdata.json.gz / arklore.json.gz 可能缺新内容，请更新快照。"
+        "当前 arkdata.json.gz / arklore.json.gz / arkenemy.json.gz 可能缺新内容，请更新快照。"
     )
     try:
         await api.post_group_message(group_openid=gid, content=text)
