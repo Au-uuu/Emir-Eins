@@ -61,9 +61,10 @@ class FakeMessage:
 
 
 async def send(text, scope=None, group="G"):
-    scope = scope or f"group:{group}"
+    # ??????????? "group"/"c2c"?group openid ???? scene_id ?
+    scene = "c2c" if (scope or "").startswith("c2c:") else "group"
     m = FakeMessage(text, group)
-    ok = await bot.handle_command(m, None, scope, group, text)
+    ok = await bot.handle_command(m, None, scene, group, text)
     return ok, m.text
 
 

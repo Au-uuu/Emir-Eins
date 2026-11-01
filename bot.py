@@ -3196,6 +3196,13 @@ async def handle_command(message, api, scope: str, scene_id: str, content: str) 
     """
     text = content.strip()
     cmd = text.lower()
+    # ?/????? scope?group:<gid> / c2c:<openid>?
+    # ??????? send_help ??? "group"/"c2c"?????????? id?
+    store_scope = (
+        f"group:{scene_id}" if scope == "group"
+        else f"c2c:{scene_id}" if scope == "c2c"
+        else scope
+    )
 
     # 管理员登记：只在私聊生效；群里命中也不回复、不回显，避免口令外泄。
     if ADMIN_RE.match(text) or ADMIN_EN_RE.match(text):
@@ -3223,21 +3230,21 @@ async def handle_command(message, api, scope: str, scene_id: str, content: str) 
 
     # 记忆：称呼 / 黑话 / 印象
     if CALL_ME_RE.match(text):
-        await do_call_me(message, scope, text)
+        await do_call_me(message, store_scope, text)
         return True
 
     if SLANG_RE.match(text):
-        await do_slang(message, scope, text)
+        await do_slang(message, store_scope, text)
         return True
 
     if IMPRESSION_RE.match(text):
-        await do_impression(message, scope, text)
+        await do_impression(message, store_scope, text)
         return True
 
     # 随机接话概率：任何人可调，只影响本群
     if random_reply.PATTERN.match(text):
         await random_reply.handle(
-            message, scope, text, RANDOM_REPLY_P, memory
+            message, store_scope, text, RANDOM_REPLY_P, memory
         )
         return True
 
