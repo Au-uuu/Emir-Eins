@@ -82,6 +82,8 @@
 | 2026-10-29 | 群聊随机接话开启 + `/接话` 按群调概率；群友画像/自动学习 60 分钟 | [recent-features](changes/2026-10-29-recent-features.md) |
 | 2026-10-29 | GIF/视频媒体说明、公告 5 分钟 no-cache/心跳、每日用量日报、B 站本地插件 | [recent-features](changes/2026-10-29-recent-features.md) |
 | 2026-10-29 | 文本关闭思考提速 + 依蜜尔爱因风味加强 | [recent-features](changes/2026-10-29-recent-features.md) |
+| 2026-11-01 | 明日方舟数据扩展：面板按等级插值、天赋、模组效果、敌人档案、企鹅物流材料掉率、每日更新检查、快照构建脚本 | [arkdata-expansion](changes/2026-11-01-arkdata-expansion.md) |
+| 2026-11-01 | B 站链接解析（官方接口 + 抽帧）、独立全局梗库（联网查梗/对话学习/后台补梗）、Webhook 现状调研 | [bili-and-meme](changes/2026-11-01-bili-and-meme.md) |
 
 ## 约定
 

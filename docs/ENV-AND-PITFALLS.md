@@ -50,6 +50,10 @@
 | `kb.py` | 本地知识库 BM25 + 召回门槛；`tools/build_kb_server.py` 负责建库 |
 | `fortune.py` | `/今日运势`（本地黄历 + 确定性抽签） |
 | `ark_news.py` | 游戏公告抓取 + 主动推送；`notices.py` 管理员汇报 |
+| `arkdata.py` / `arklore.py` / `arkenemy.py` | 干员数值 / 语音档案 / 敌人档案快照查询；`tools/build_arkdata.py` 重建快照 |
+| `penguin.py` | 企鹅物流材料掉率查询（本地缓存 `material_drops.json.gz`） |
+| `bili.py` | B 站链接解析 + 抽帧（官方接口 + `buvid3`，不走第三方解析站） |
+| `meme.py` | 全局梗库（联网查梗 / 对话学习 / 后台补梗，`data/meme.db`） |
 | `push_store.py` | 公告开关/已见去重（SQLite）；`chat_store.py` 人格记忆；`group_context.py` 群聊上下文缓冲 |
 | `image_store.py` / `uploader.py` / `thumb` 相关 | 图库、上传、缩略图 |
 | `persona/依蜜尔爱因.md` | 人格卡（人设、看图规则等） |
@@ -64,6 +68,11 @@
 | `data/chat.db` | 人格聊天记忆（**按场景**：`c2c:<openid>` / `group:<openid>`，默认 100 条） | 可删（丢记忆） |
 | `data/group_context.db` | 群聊上下文缓冲（最近 60 条 / 120 分钟；只存文字与媒体占位） | 可删（丢群聊背景） |
 | `data/memory.db` | 黑话 / 人物印象 / 称呼（按群隔离；自动条目可删） | 可删（丢记忆） |
+| `data/meme.db` | 全局梗库（跨群共享；手写/联网/对话来源） | 可删（丢梗库） |
+| `data/arkdata.json.gz` / `arklore.json.gz` / `arkenemy.json.gz` | 干员数值 / 语音档案 / 敌人档案快照 | 可删（对应查询失效，重建见 `tools/build_arkdata.py`） |
+| `data/material_drops.json.gz` | 企鹅物流材料掉率缓存 | 可删（下次查询重建，首次较慢） |
+| `data/arkdata.meta.json` | 快照来源 commit | 可删（更新检查会失去对比基准） |
+| `data/arkdata_update.json` | 每日更新检查状态 | 可删（当天会重新检查） |
 | `data/usage.db` | 模型用量账本（token/费用，`/用量` 用） | 可删（丢统计） |
 | `data/push.db` | `push_groups`（群×游戏开关）+ `seen_news`（已见公告去重） | 可删（会重推/丢开关） |
 | `data/r6bind.db` | R6 绑定（openid → 平台/昵称/profile_id） | 可删（丢绑定） |
@@ -89,7 +98,7 @@
 | `QQ_BOT_RANDOM_REPLY` | 群友随机接话概率（默认 `0` 完全关闭；建议 `0.02~0.05`），支持 `0.03`/`3%`/`3` |
 | `QQ_BOT_RANDOM_REPLY_COOLDOWN` | 同一群两次随机接话的最小间隔秒数（默认 300） |
 | `QQ_BOT_MEMORY` | 黑话/印象/称呼总开关（默认 `1`） |
-| `QQ_BOT_MEMORY_LEARN_MINUTES` | 自动学习间隔分钟（线上 120；`0` 关闭） |
+| `QQ_BOT_MEMORY_LEARN_MINUTES` | 自动学习间隔分钟（线上 60；`0` 关闭） |
 | `QQ_BOT_MEMORY_LEARN_MAX_GROUPS` | 每轮最多看几个群（默认 5） |
 | `QQ_BOT_TEXT_UA` | 可选；OpenCode Go 的 Cloudflare 会 403 默认 `Python-urllib` UA，代码默认 `Emir-Eins-QQBot/1.0` |
 | `QQ_BOT_GROUP_CONTEXT` | 群聊上下文缓冲开关（默认 `1`）；`0` 关闭 |
@@ -97,6 +106,9 @@
 | `QQ_BOT_CHAT_MEMORY` / `_MINUTES` | 人格记忆：每会话条数 / 存活分钟（线上 200 / 60） |
 | `QQ_BOT_CHAT_RECENT` / `_SUMMARY_EVERY` | 最近保留原文条数 / 多少条触发摘要（线上 20 / 50） |
 | `QQ_BOT_VIDEO_MODE` | 视频处理：`frames`（默认）/ `url` / `off`；`FRAME_INTERVAL` 15s、`MIN_FRAMES` 9、`MAX_FRAMES` 30 |
+| `QQ_BOT_ARKDATA*` / `QQ_BOT_ARKENEMY` / `QQ_BOT_ARKLORE` | 数值/敌人/语音快照路径；每日 12:00 检查 7 张上游表，只提醒不自动下载 |
+| `QQ_BOT_BILI*` | B 站解析：`BILI=1`、`MAX_MB=40`、`INTERVAL=10`、`MIN_FRAMES=9`、`MAX_FRAMES=24` |
+| `QQ_BOT_MEME*` | 梗库：`MEME=1`、`SEARCH=1`、`AUTO=1`、`CONF=0.55`、`DB=data/meme.db` |
 | `QQ_BOT_USAGE` | 用量账本开关（默认 1）；`/用量 [天数]` 查看 |
 | `QQ_BOT_R6_KEY` / `QQ_BOT_R6_KEY_EXPIRE` | Arenyze key 与到期日（到期前管理员会被私聊提醒） |
 | `QQ_BOT_R6_TIMEOUT` | R6 接口超时秒数（默认 25） |
@@ -121,8 +133,9 @@
 
 | 指令 | 模块 | 说明 |
 |---|---|---|
-| 直接说话 / 群 @ | `bot.py` + `persona.py` + `kb.py` | 人格聊天，带本地知识库检索、看图（视觉模型）、联网搜索、群聊上下文缓冲、黑话/印象 |
+| 直接说话 / 群 @ | `bot.py` + `persona.py` + `kb.py` | 人格聊天，带本地知识库检索、看图（视觉模型）、B 站链接抽帧、联网搜索、群聊上下文缓冲、黑话/印象 |
 | `/叫我`、`/黑话`、`/印象` | `memory_store.py` + `learning.py` | 称呼/黑话/人物印象；管理员可触发自动学习 |
+| `/梗`、`/梗 查/来源/学/添加/删` | `meme.py` + `learning.py` | 全局梗库；联网查梗、对话学习、后台补梗 |
 | `/用量 [天数]` | `usage_store.py` | 模型调用/token/费用汇总（管理员） |
 | `/help`、`/help r6` | `bot.py` + `help_image.py` | 主帮助只列常用；`HELP_TOPICS` 放详细用法（r6/图库/公告/名片） |
 | `/今日运势`、`/运势` | `fortune.py` | 本地黄历 + 确定性抽签（同人同天固定），**必须带斜杠** |
@@ -413,6 +426,30 @@ $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($py))
   `get_group_member_list`（`nickname` + `card`）做消息关联映射；**不要抓备注名**。
 - **防回归**：`group_context` 的新消息会写 `display_name`；旧消息留空仍显示
   `用户xxxxxx`，属正常。
+
+### 7.17 B 站视频页 412：不是腾讯云封网
+- **现象**：`yt-dlp` / 直接抓 `bilibili.com/video/BV...` 返回 412；但首页 200、
+  `api.bilibili.com` 的 `view`/`playurl` 带浏览器头 + `buvid3` 后 200。
+- **根因**：B 站风控看 IP/ASN/UA/Cookie，机房 IP 本来就容易被盯上；
+  阿里云不保证能过，隔壁能用可能是登录 Cookie、代理或第三方解析。
+- **修法**：`bili.py` 走官方 JSON 接口（`view` + `playurl`），自动取匿名
+  `buvid3`，遇到 `-412/-352` 刷新 Cookie 重试一次；不要用第三方解析站。
+- **边界**：1080p 要登录 Cookie；付费/地区限制取不到流，退回标题/简介。
+
+### 7.18 梗库自动学习会烧搜索额度
+- **现象**：后台把本群所有自动黑话挨个联网，日志刷「触发限流」。
+- **修法**：只挑 **≥3 字**、置信度 **≥0.75** 的自动黑话；每轮最多尝试 **2 个**；
+  撞冷却就等 9 秒；模型判定「不是梗」进 **30 天拒绝缓存**。
+- **注意**：两字词（舒服/跑路/六星）不自动查，避免污染；用户主动 `/梗 查` 不受限制。
+- **防回归**：`_test_meme.py` 守拒绝缓存、手写优先、第二次走本地。
+
+### 7.19 Webhook 不是配置开关
+- **现状**：`botpy 1.2.1` + `client.run()` 只有 WebSocket；平台虽然支持 Webhook，
+  但当前 SDK 没有这个能力。
+- **要切需要**：升级 `qq-botpy-v2[webhook]`，或自己写 aiohttp 回调 + Ed25519 验签；
+  回调必须 HTTPS，端口只允许 80/443/8080/8443；准备域名 + 证书。
+- **注意**：管理端切换**立即生效**，WebSocket 会断；单机长连接 + 看门狗已稳定，
+  除非要做多实例/Serverless，否则没必要切。
 
 ## 8. 待办 / 观察项
 
