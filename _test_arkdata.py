@@ -18,7 +18,17 @@ data = {
             "id": "char_4247_oxi",
             "en": "Talulah",
             "class": "近卫",
-            "panel": {"maxHp": 2910, "atk": 875, "def": 425, "magicResistance": 10, "blockCnt": 2, "cost": 23, "baseAttackTime": 1.2, "respawnTime": 70},
+            "phases": [
+                {"max": 50, "frames": [
+                    {"level": 1, "data": {"maxHp": 1449, "atk": 400, "def": 202, "magicResistance": 10, "blockCnt": 2, "cost": 19, "baseAttackTime": 1.2, "respawnTime": 70}},
+                    {"level": 50, "data": {"maxHp": 1907, "atk": 572, "def": 281, "magicResistance": 10, "blockCnt": 2, "cost": 19, "baseAttackTime": 1.2, "respawnTime": 70}},
+                ]},
+                {"max": 90, "frames": [
+                    {"level": 1, "data": {"maxHp": 2415, "atk": 743, "def": 361, "magicResistance": 10, "blockCnt": 2, "cost": 23, "baseAttackTime": 1.2, "respawnTime": 70}},
+                    {"level": 90, "data": {"maxHp": 2910, "atk": 875, "def": 425, "magicResistance": 10, "blockCnt": 2, "cost": 23, "baseAttackTime": 1.2, "respawnTime": 70}},
+                ]},
+            ],
+            "favor": {"atk": 90},
             "skills": [
                 {"i": 1, "name": "照霎白夜", "spCost": 8, "initSp": 0, "duration": -1},
                 {"i": 2, "name": "阂断骤雪", "spCost": 7, "initSp": 21, "duration": 0},
@@ -62,8 +72,10 @@ def main() -> int:
     check("初始 SP 38", "初始 SP 38" in text, text)
     check("持续 36", "持续 36" in text, text)
 
-    text = arkdata.context("塔露拉攻击力防御阻挡")
-    check("面板命中", "攻击 875" in text and "防御 425" in text and "阻挡 2" in text, text)
+    text = arkdata.context("塔露拉面板")
+    check("面板命中", "攻击 965" in text and "防御 425" in text and "阻挡 2" in text, text)
+    text50 = arkdata.context("塔露拉精二50面板")
+    check("等级插值", "生命 2688" in text50 and "攻击 906" in text50, text50)
 
     print("[2] 意图过滤")
     check("闲聊不注入", arkdata.context("塔露拉好帅") == "")
