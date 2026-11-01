@@ -2752,6 +2752,9 @@ async def persona_reply(
         summary = await asyncio.to_thread(websearch.search, content)
         if summary:
             model_text = websearch.wrap(summary) + model_text
+            log.info("[??] ??? %d ??%s", len(summary), content[:30])
+        else:
+            log.info("[??] ??????????%s", content[:30])
     # 群聊背景：把最近没 @ 机器人的群消息也喂给模型（只作背景，不主动回复）。
     # 排除当前这条（正文已单独传了），避免同一句话出现两次。
     ctx = ""

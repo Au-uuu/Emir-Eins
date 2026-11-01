@@ -69,6 +69,11 @@ check("纯时间词闲聊不触发", websearch.should_search("你好呀，今天
 check("「今天好累」不触发", websearch.should_search("今天好累啊") is False)
 check("空串不触发", websearch.should_search("") is False)
 
+check("最近问新东西触发", websearch.should_search("最近有什么新游戏") is True)
+check("最近问电影触发", websearch.should_search("最近有什么好看的电影") is True)
+check("freshness 最近=7", websearch._freshness("最近有什么新游戏") == 7)
+check("freshness 今年=365", websearch._freshness("今年 TGA 什么时候") == 365)
+check("freshness 普通事实不限", websearch._freshness("这个角色是谁") == 0)
 websearch.urllib.request.urlopen = _ok_urlopen
 out = websearch.search("今天有什么新闻")
 check("解析出摘要", out == "检索摘要ABC", out)
