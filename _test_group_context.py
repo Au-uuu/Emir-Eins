@@ -120,7 +120,7 @@ async def main() -> int:
     print("[5] 注入人格链路（只群聊，不重复当前消息）")
     seen = {}
 
-    async def fake_generate(history, text, session="", temperature=0.8):
+    async def fake_generate(history, text, session="", temperature=0.8, **kwargs):
         seen["text"] = text
         return "好"
 

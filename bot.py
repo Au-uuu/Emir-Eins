@@ -2980,7 +2980,11 @@ async def persona_reply(
             model_text = f"（视觉模型对这条内容的客观描述：\n{desc}\n）\n" + model_text
             if media_note:
                 model_text = media_note + "\n" + model_text
-            reply = await persona.generate(history, model_text, scope, temperature=0.5 if factual else 0.8)
+            reply = await persona.generate(
+                history, model_text, scope,
+                temperature=0.5 if factual else 0.8,
+                reasoning="low" if factual else None,
+            )
         elif images:
             # 描述失败：退回单次视觉调用（仍带打标线索 + 媒体说明）
             if hints:
@@ -2989,7 +2993,11 @@ async def persona_reply(
                 model_text = media_note + "\n" + model_text
             reply = await persona.generate_vision(history, model_text, images, scope)
         else:
-            reply = await persona.generate(history, model_text, scope, temperature=0.5 if factual else 0.8)
+            reply = await persona.generate(
+                history, model_text, scope,
+                temperature=0.5 if factual else 0.8,
+                reasoning="low" if factual else None,
+            )
     elif images:
         if hints:
             model_text = hints + model_text
@@ -2997,7 +3005,11 @@ async def persona_reply(
             model_text = media_note + "\n" + model_text
         reply = await persona.generate_vision(history, model_text, images, scope)
     else:
-        reply = await persona.generate(history, model_text, scope, temperature=0.5 if factual else 0.8)
+        reply = await persona.generate(
+            history, model_text, scope,
+            temperature=0.5 if factual else 0.8,
+            reasoning="low" if factual else None,
+        )
     if not reply:
         log.info("[人格] 本轮无回复: scope=%s", scope)
         if image_only:

@@ -81,7 +81,7 @@ async def main() -> int:
         seen["video"] = video_url
         return "视频里有人在走路。"
 
-    async def fake_generate(history, text, session="", temperature=0.8):
+    async def fake_generate(history, text, session="", temperature=0.8, **kwargs):
         return "看到了。"
 
     orig_frames = video_frames.frames_from_url

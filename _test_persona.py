@@ -4,6 +4,7 @@
 """
 import asyncio
 import base64
+import json
 import os
 import sys
 import tempfile
@@ -164,13 +165,13 @@ async def main() -> int:
     bot.chat_cooldown.seconds = 0
     persona.available = lambda: True
 
-    async def ok_generate(history, text, session="", temperature=0.8):
+    async def ok_generate(history, text, session="", temperature=0.8, **kwargs):
         return f"【回答】收到「{text}」上下文{len(history)}条"
 
-    async def none_generate(history, text, session="", temperature=0.8):
+    async def none_generate(history, text, session="", temperature=0.8, **kwargs):
         return None
 
-    async def bad_generate(history, text, session="", temperature=0.8):
+    async def bad_generate(history, text, session="", temperature=0.8, **kwargs):
         return "这条回复里有测试敏感词"
 
     persona.generate = ok_generate
@@ -362,6 +363,7 @@ async def main() -> int:
     def _fake_urlopen(req, timeout=None):
         captured["url"] = req.full_url
         captured["headers"] = {k.lower(): v for k, v in req.header_items()}
+        captured["body"] = json.loads(req.data.decode("utf-8"))
         return _FakeResp()
 
     _orig_urlopen = persona.urllib.request.urlopen
@@ -374,6 +376,15 @@ async def main() -> int:
             "OpenCode 会话头是 scope 的哈希",
             captured["headers"].get("x-opencode-session") == persona.session_id("group:G1"),
             captured["headers"].get("x-opencode-session"),
+        )
+        persona._request_sync(
+            "sys", "test-key", [], "hi", None, None, "group:G1", reasoning="low"
+        )
+        check(
+            "显式 reasoning 开启思考并带强度",
+            captured["body"].get("thinking", {}).get("type") == "enabled"
+            and captured["body"].get("reasoning_effort") == "low",
+            str(captured["body"]),
         )
         check("不同群会话 ID 不同", persona.session_id("group:G1") != persona.session_id("group:G2"))
         os.environ["QQ_BOT_TEXT_URL"] = "https://example.com/chat"
@@ -416,7 +427,7 @@ async def main() -> int:
         seen["history"], seen["text"], seen["images"] = history, text, images
         return "【看图】我看到了"
 
-    async def fail_generate(history, text, session="", temperature=0.8):
+    async def fail_generate(history, text, session="", temperature=0.8, **kwargs):
         raise AssertionError("带图消息不该走纯文本模型")
 
     persona.available = lambda: True
@@ -499,7 +510,7 @@ async def main() -> int:
         desc_seen["images"], desc_seen["video"], desc_seen["hint"] = images, video_url, hint_text
         return "图中是初音未来（蓝绿双马尾），坐在栏杆上。"
 
-    async def fake_generate(history, text, session="", temperature=0.8):
+    async def fake_generate(history, text, session="", temperature=0.8, **kwargs):
         desc_seen["text"] = text
         return "【分析】检测到初音未来。【肯定】本机也在。"
 
@@ -696,7 +707,7 @@ async def main() -> int:
 
     persona.vision_enabled = lambda: False
 
-    async def text_cap(history, text, session="", temperature=0.8):
+    async def text_cap(history, text, session="", temperature=0.8, **kwargs):
         cap["text2"] = text
         return "【回答】好的"
 

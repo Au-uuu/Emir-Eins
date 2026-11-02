@@ -130,6 +130,16 @@ def text_thinking() -> str:
     return _env("QQ_BOT_TEXT_THINKING").lower()
 
 
+def text_reasoning_effort() -> str:
+    """文本思考强度：low / high / max；留空用厂商默认（DeepSeek 默认 high）。"""
+    return _env("QQ_BOT_TEXT_REASONING_EFFORT").lower()
+
+
+def vl_reasoning_effort() -> str:
+    """视觉思考强度：low / high / max；留空用厂商默认。"""
+    return _env("QQ_BOT_VL_REASONING_EFFORT").lower()
+
+
 _TRUTHY = {"1", "true", "on", "yes"}
 
 
@@ -303,9 +313,16 @@ def available() -> bool:
 
 
 async def generate(
-    history: list[dict], text: str, session: str = "", temperature: float = 0.8
+    history: list[dict],
+    text: str,
+    session: str = "",
+    temperature: float = 0.8,
+    reasoning: str | None = None,
 ) -> str | None:
-    """生成一句回复。失败（网络/超时/内容安全拦截）一律返回 None，由调用方静默。"""
+    """生成一句回复。失败（网络/超时/内容安全拦截）一律返回 None，由调用方静默。
+
+    reasoning: 本次调用的思考强度（low/high/max）；None 用环境配置或厂商默认。
+    """
     text = (text or "").strip()
     if not text:
         return None
@@ -315,7 +332,7 @@ async def generate(
         return None
     return await _request_with_retry(
         prompt, key, history, text, None, None, session,
-        temperature=temperature, kind="text",
+        temperature=temperature, kind="text", reasoning=reasoning,
     )
 
 
@@ -438,6 +455,7 @@ def _request_sync(
     session: str = "",
     temperature: float = 0.8,
     kind: str = "text",
+    reasoning: str | None = None,
 ) -> str | None:
     has_media = bool(images) or bool(video_url)
     messages = [{"role": "system", "content": prompt}]
@@ -453,10 +471,20 @@ def _request_sync(
         "max_tokens": max_tokens(),
     }
     # 思考模式：视觉沿用 VL 开关；文本默认 disabled（聊天优先速度）。
-    # 留空/厂商不认时不带该字段，避免把别的模型请求打坏。
+    # 本次调用显式传了 reasoning 时，临时开启思考并带上强度；留空/厂商不认时不带字段。
     thinking = vl_thinking() if has_media else text_thinking()
+    if reasoning:
+        thinking = "enabled"
     if thinking in ("enabled", "disabled"):
         payload["thinking"] = {"type": thinking}
+    if thinking == "enabled":
+        effort = (
+            reasoning
+            or (vl_reasoning_effort() if has_media else text_reasoning_effort())
+            or ""
+        ).lower()
+        if effort in ("low", "high", "max"):
+            payload["reasoning_effort"] = effort
     url = vl_url() if has_media else text_url()
     req_timeout = vl_timeout(bool(video_url)) if has_media else timeout()
     headers = {

@@ -80,7 +80,7 @@ async def main() -> int:
     print("[2] persona_reply 拆条发送")
     long_reply = "先说结论，这个能用。不过有两个小坑，第一个是延迟，第二个是配额。你要是急用，我可以先帮你把简单的部分搭起来。"
 
-    async def fake_generate(history, text, session="", temperature=0.8):
+    async def fake_generate(history, text, session="", temperature=0.8, **kwargs):
         return long_reply
 
     orig_generate = persona.generate
