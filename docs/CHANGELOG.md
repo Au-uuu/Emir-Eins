@@ -89,6 +89,7 @@
 | 2026-11-12 | 引用图片首包无附件时重试约 8 秒；图片识别增加 `width/height` 与 QQ 图片 CDN 域名 | [add-recent-image](changes/2026-11-12-add-recent-image.md) |
 | 2026-11-12 | 用量日报去掉 openid Top；只列花费 >¥0.5 的群并显示群名（缓存 `data/group_names.json`） | [usage-report-top](changes/2026-11-12-usage-report-top.md) |
 | 2026-11-12 | 网盘图库备份增加 `gallery/` 可读视图：按公开/群+关键词分文件夹、文件名带序号/关键词/SHA、`_索引.csv` | [readable-gallery-backup](changes/2026-11-12-readable-gallery-backup.md) |
+| 2026-11-12 | 随机接话先总结当前群话题（主模型、缓存 60s），上下文缩到 15 条并开 `low` 思考；被 @ 闲聊不开思考 | [proactive-topics](changes/2026-11-12-proactive-topics.md) |
 
 ## 约定
 

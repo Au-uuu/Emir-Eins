@@ -117,11 +117,30 @@ async def main() -> int:
     await legacy.remember("G5", "l1", "openidL", "旧库消息", "旧昵称")
     check("旧库能写入并能读到昵称", "旧昵称: 旧库消息" in (await legacy.render("G5")), await legacy.render("G5"))
 
+    print("[4c] 群话题摘要")
+    group_context._topics_cache.clear()
+
+    async def fake_topics(prompt, text, session="", kind="learn", **kwargs):
+        return '{"topics":["终末地新版本","塔露拉面板"]}'
+
+    orig_raw = persona.raw_complete
+    persona.raw_complete = fake_topics
+    try:
+        topic = await store.topics("G1", limit=5)
+        check("话题摘要解析", topic == "终末地新版本 / 塔露拉面板", topic)
+        persona.raw_complete = None
+        cached = await store.topics("G1", limit=5)
+        check("话题摘要走缓存", cached == topic, cached)
+    finally:
+        persona.raw_complete = orig_raw
+        group_context._topics_cache.clear()
+
     print("[5] 注入人格链路（只群聊，不重复当前消息）")
     seen = {}
 
     async def fake_generate(history, text, session="", temperature=0.8, **kwargs):
         seen["text"] = text
+        seen["reasoning"] = kwargs.get("reasoning")
         return "好"
 
     orig_generate = persona.generate
@@ -138,6 +157,29 @@ async def main() -> int:
         check("群聊背景进了输入", "刚才在聊终末地" in injected, injected)
         check("当前消息只出现一次", injected.count("现在呢") == 1, injected)
         check("带群聊头部", "群聊最近消息" in injected, injected)
+        check("被@闲聊不开思考", seen.get("reasoning") is None, seen.get("reasoning"))
+
+        # 随机接话：先总结话题，再 low 思考
+        bot.chat_cooldown.seconds = 0
+        await store.remember("GC2", "r1", "openidR1", "刚才在聊终末地新版本")
+        await store.remember("GC2", "r2", "openidR2", "塔露拉面板也有人问")
+        await bot.chat.clear("group:GC2")
+        orig_raw = persona.raw_complete
+
+        async def fake_raw(prompt, text, session="", kind="learn", **kwargs):
+            return '{"topics":["终末地新版本","塔露拉面板"]}'
+
+        persona.raw_complete = fake_raw
+        try:
+            seen.clear()
+            m3 = FakeMessage("", group_openid="GC2", openid="openidR3")
+            await bot.persona_reply(m3, "group:GC2", "随便聊聊", proactive=True)
+            proactive_text = seen.get("text", "")
+            check("随机接话注入当前话题", "【当前群话题" in proactive_text and "终末地新版本" in proactive_text, proactive_text)
+            check("随机接话开 low 思考", seen.get("reasoning") == "low", seen.get("reasoning"))
+        finally:
+            persona.raw_complete = orig_raw
+            group_context._topics_cache.clear()
 
         seen.clear()
         m2 = FakeMessage("单聊内容", openid="openidU1")

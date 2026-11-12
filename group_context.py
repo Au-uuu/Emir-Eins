@@ -33,8 +33,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+import re
 import sqlite3
 import time
 
@@ -51,6 +53,57 @@ MAX_LINE_CHARS = 200
 
 _HEADER = "（群聊最近消息，按时间正序，仅供参考；不要逐条复述，也不要把背景当成在叫你：）"
 _FOOTER = "（以上是群聊背景；下面是需要你回应的消息）"
+
+_TOPIC_PROMPT = (
+    "你是群聊话题整理助手。根据最近的群聊记录，提取当前仍在聊的 1~3 个话题。\n"
+    "要求：\n"
+    "1. 只列当前话题，已经结束的旧话题不要列；\n"
+    "2. 按最近消息的优先级排序，每条不超过 20 字；\n"
+    "3. 忽略广告、卡片、链接、命令、图片/视频占位；\n"
+    "4. 没有明确话题就输出空数组。\n"
+    '只输出严格 JSON，例如 {"topics":["话题一","话题二"]}，不要输出其他字。'
+)
+
+_topics_cache: dict[str, tuple[float, str]] = {}
+_TOPICS_TTL = 60.0
+
+
+def _parse_topics(raw: str) -> list[str]:
+    text = (raw or "").strip()
+    if not text:
+        return []
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    data = None
+    try:
+        data = json.loads(text)
+    except ValueError:
+        start, end = text.find("{"), text.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                data = json.loads(text[start : end + 1])
+            except ValueError:
+                data = None
+    items = []
+    if isinstance(data, dict):
+        items = data.get("topics") or []
+    elif isinstance(data, list):
+        items = data
+    if not items:
+        # 模型偶尔不按 JSON 输出，按行/顿号兜底
+        items = re.split(r"[\n、,，]+", text)
+    out = []
+    for item in items:
+        item = re.sub(r"^[\s\-*·\d.、]+", "", str(item)).strip().strip('"“”')
+        if not item or item.startswith("{"):
+            continue
+        if item in ("无", "没有", "暂无话题", "无明确话题"):
+            continue
+        if len(item) > 24:
+            item = item[:24].rstrip()
+        if item not in out:
+            out.append(item)
+    return out[:3]
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS group_messages (
@@ -211,6 +264,56 @@ class GroupContextStore:
     async def active_groups(self, minutes: float = 180.0) -> list[str]:
         """最近 N 分钟有消息的群（自动学习用）。"""
         return await asyncio.to_thread(self._active_groups_sync, minutes)
+
+    async def topics(self, group_openid: str, limit: int = 20) -> str:
+        """用主模型把最近群聊压成 1~3 个当前话题，缓存 60 秒。
+
+        只给随机接话用：让模型知道“现在在聊什么”，避免接旧话题。
+        失败返回空串，调用方回退到原始群聊上下文。
+        """
+        if not enabled() or not group_openid:
+            return ""
+        if (os.getenv("QQ_BOT_GROUP_TOPICS", "1") or "1").strip().lower() in (
+            "0", "false", "off", "no", "",
+        ):
+            return ""
+        now = time.monotonic()
+        hit = _topics_cache.get(group_openid)
+        if hit and now - hit[0] < _TOPICS_TTL:
+            return hit[1]
+
+        rows = await self.recent(group_openid, limit=limit)
+        lines: list[str] = []
+        for row in rows:
+            text = " ".join((row.get("content") or "").split())
+            if not text or text.startswith("/"):
+                continue
+            if text.startswith("[") and text.endswith("]"):
+                continue
+            who = (row.get("display_name") or "").strip() or "群友"
+            lines.append(f"{who}: {text[:160]}")
+        transcript = "\n".join(lines[-limit:])[-3000:]
+        if not transcript:
+            _topics_cache[group_openid] = (now, "")
+            return ""
+
+        raw = ""
+        try:
+            # 惰性导入，避免 group_context <-> persona 循环依赖
+            import persona
+
+            raw = await persona.raw_complete(
+                _TOPIC_PROMPT,
+                transcript,
+                session=f"topics:{group_openid}",
+                kind="summary",
+            ) or ""
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[群话题] 总结失败 %s：%s", group_openid[:8], exc)
+        topics = _parse_topics(raw)
+        text = " / ".join(topics)
+        _topics_cache[group_openid] = (now, text)
+        return text
 
     # ---------------- 同步实现 ----------------
 
