@@ -55,9 +55,9 @@ _HEADER = "（群聊最近消息，按时间正序，仅供参考；不要逐条
 _FOOTER = "（以上是群聊背景；下面是需要你回应的消息）"
 
 _TOPIC_PROMPT = (
-    "你是群聊话题整理助手。根据最近的群聊记录，提取当前仍在聊的 1~3 个话题。\n"
+    "你是群聊话题整理助手。根据最近 {minutes} 分钟的群聊记录，提取当前仍在聊的 1~3 个话题。\n"
     "要求：\n"
-    "1. 只列当前话题，已经结束的旧话题不要列；\n"
+    "1. 只列当前话题，已经结束的旧话题不要列；超过 {minutes} 分钟的内容不要当当前话题；\n"
     "2. 按最近消息的优先级排序，每条不超过 20 字；\n"
     "3. 忽略广告、卡片、链接、命令、图片/视频占位；\n"
     "4. 没有明确话题就输出空数组。\n"
@@ -125,6 +125,15 @@ def enabled() -> bool:
     return (os.getenv("QQ_BOT_GROUP_CONTEXT", "1") or "1").strip().lower() not in (
         "0", "false", "off", "no", ""
     )
+
+
+def proactive_window_minutes() -> float:
+    """随机接话只看最近多少分钟的群聊；默认 10 分钟，避免接旧话题。"""
+    try:
+        value = float(os.getenv("QQ_BOT_PROACTIVE_WINDOW_MINUTES", "10") or 10)
+    except ValueError:
+        value = 10.0
+    return max(1.0, min(30.0, value))
 
 
 def _env_int(name: str, default: int, low: int, high: int) -> int:
@@ -214,13 +223,21 @@ class GroupContextStore:
         )
 
     async def render(
-        self, group_openid: str, exclude_id: str = "", limit: int | None = None
+        self,
+        group_openid: str,
+        exclude_id: str = "",
+        limit: int | None = None,
+        since_ts: float = 0.0,
     ) -> str:
         """取最近群消息拼成提示词块；没有可用的返回空串。"""
         if not enabled() or not group_openid:
             return ""
         return await asyncio.to_thread(
-            self._render_sync, group_openid, exclude_id or "", limit
+            self._render_sync,
+            group_openid,
+            exclude_id or "",
+            limit,
+            since_ts,
         )
 
     async def clear(self, group_openid: str) -> int:
@@ -265,11 +282,13 @@ class GroupContextStore:
         """最近 N 分钟有消息的群（自动学习用）。"""
         return await asyncio.to_thread(self._active_groups_sync, minutes)
 
-    async def topics(self, group_openid: str, limit: int = 20) -> str:
+    async def topics(
+        self, group_openid: str, limit: int = 20, minutes: float | None = None
+    ) -> str:
         """用主模型把最近群聊压成 1~3 个当前话题，缓存 60 秒。
 
         只给随机接话用：让模型知道“现在在聊什么”，避免接旧话题。
-        失败返回空串，调用方回退到原始群聊上下文。
+        minutes 限定只看最近多少分钟；失败返回空串。
         """
         if not enabled() or not group_openid:
             return ""
@@ -277,12 +296,16 @@ class GroupContextStore:
             "0", "false", "off", "no", "",
         ):
             return ""
+        window = float(minutes) if minutes is not None else proactive_window_minutes()
+        window = max(1.0, min(30.0, window))
+        cache_key = f"{group_openid}:{int(window)}"
         now = time.monotonic()
-        hit = _topics_cache.get(group_openid)
+        hit = _topics_cache.get(cache_key)
         if hit and now - hit[0] < _TOPICS_TTL:
             return hit[1]
 
-        rows = await self.recent(group_openid, limit=limit)
+        since_ts = time.time() - window * 60.0
+        rows = await self.recent(group_openid, limit=limit, since_ts=since_ts)
         lines: list[str] = []
         for row in rows:
             text = " ".join((row.get("content") or "").split())
@@ -291,10 +314,11 @@ class GroupContextStore:
             if text.startswith("[") and text.endswith("]"):
                 continue
             who = (row.get("display_name") or "").strip() or "群友"
-            lines.append(f"{who}: {text[:160]}")
+            clock = time.strftime("%H:%M", time.localtime(row.get("ts") or 0))
+            lines.append(f"[{clock}] {who}: {text[:160]}")
         transcript = "\n".join(lines[-limit:])[-3000:]
         if not transcript:
-            _topics_cache[group_openid] = (now, "")
+            _topics_cache[cache_key] = (now, "")
             return ""
 
         raw = ""
@@ -303,7 +327,7 @@ class GroupContextStore:
             import persona
 
             raw = await persona.raw_complete(
-                _TOPIC_PROMPT,
+                _TOPIC_PROMPT.replace("{minutes}", str(int(window))),
                 transcript,
                 session=f"topics:{group_openid}",
                 kind="summary",
@@ -312,7 +336,7 @@ class GroupContextStore:
             log.warning("[群话题] 总结失败 %s：%s", group_openid[:8], exc)
         topics = _parse_topics(raw)
         text = " / ".join(topics)
-        _topics_cache[group_openid] = (now, text)
+        _topics_cache[cache_key] = (now, text)
         return text
 
     # ---------------- 同步实现 ----------------
@@ -354,10 +378,16 @@ class GroupContextStore:
             )
 
     def _render_sync(
-        self, group_openid: str, exclude_id: str, limit: int | None
+        self,
+        group_openid: str,
+        exclude_id: str,
+        limit: int | None,
+        since_ts: float = 0.0,
     ) -> str:
         take = max(1, min(int(limit or self.max_messages), self.max_messages))
         cutoff = time.time() - self.ttl_seconds
+        if since_ts:
+            cutoff = max(cutoff, float(since_ts))
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT msg_id, openid, display_name, content, ts FROM group_messages "

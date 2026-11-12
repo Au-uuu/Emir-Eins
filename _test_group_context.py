@@ -101,6 +101,12 @@ async def main() -> int:
     check("过期消息不返回", (await old.render("G4")) == "")
     await old.remember("G4", "new1", "openidN", "刚刚")
     check("新消息仍在", "刚刚" in await old.render("G4"))
+    since = time.time() - 60
+    check(
+        "since_ts 排除过旧消息",
+        "很久以前" not in (await old.render("G4", since_ts=since)),
+        await old.render("G4", since_ts=since),
+    )
     check("clear 清空", (await old.clear("G4")) == 1 and (await old.count("G4")) == 0)
 
     print("[4b] 旧库迁移补 display_name 列")
@@ -176,7 +182,7 @@ async def main() -> int:
             await bot.persona_reply(m3, "group:GC2", "随便聊聊", proactive=True)
             proactive_text = seen.get("text", "")
             check("随机接话注入当前话题", "【当前群话题" in proactive_text and "终末地新版本" in proactive_text, proactive_text)
-            check("随机接话开 low 思考", seen.get("reasoning") == "low", seen.get("reasoning"))
+            check("随机接话开 high 思考", seen.get("reasoning") == "high", seen.get("reasoning"))
         finally:
             persona.raw_complete = orig_raw
             group_context._topics_cache.clear()

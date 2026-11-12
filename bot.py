@@ -3069,12 +3069,14 @@ async def persona_reply(
     # 排除当前这条（正文已单独传了），避免同一句话出现两次。
     ctx = ""
     topic_hint = ""
+    proactive_window = group_context.proactive_window_minutes() if proactive else 0.0
     if scope.startswith("group:"):
         gid = scope.split(":", 1)[1]
         ctx = await group_ctx.render(
             gid,
             exclude_id=str(getattr(message, "id", "") or ""),
             limit=15 if proactive else None,
+            since_ts=(time.time() - proactive_window * 60.0) if proactive else 0.0,
         )
         if ctx:
             model_text = ctx + model_text
@@ -3083,12 +3085,17 @@ async def persona_reply(
         # 只给主动插话用；被 @ 时当前发言人信息已经够了，避免每轮白烧 token。
         if proactive:
             try:
-                topics = await group_ctx.topics(gid, limit=20)
+                topics = await group_ctx.topics(
+                    gid, limit=20, minutes=proactive_window
+                )
             except Exception as exc:  # noqa: BLE001
                 log.warning("[群话题] 读取失败，跳过注入：%s", exc)
                 topics = ""
             if topics:
-                topic_hint = f"【当前群话题（按最近消息）】{topics}\n"
+                topic_hint = (
+                    f"【当前群话题（最近 {proactive_window:.0f} 分钟，按最近消息）】"
+                    f"{topics}\n"
+                )
                 log.info("[群话题] 已注入：%s", topics[:80])
             try:
                 members = await group_ctx.recent_members(gid, limit=80)
@@ -3121,6 +3128,7 @@ async def persona_reply(
             "【触发方式】本机是自己决定插一句，不是被点名。"
             "先看【当前群话题】，只接最近还在聊的那个；如果同时有多个话题，"
             "选最近 3 条消息里的那个，不要翻旧账。"
+            f"只接最近 {proactive_window:.0f} 分钟内的内容；更早的旧话题不要接。"
             "顺着当前话题接一句；不要答非所问，不要重复别人刚说过的话，也不要把整段群聊复述一遍。\n"
             + topic_hint
             + model_text
@@ -3143,7 +3151,7 @@ async def persona_reply(
             reply = await persona.generate(
                 history, model_text, scope,
                 temperature=0.5 if factual else 0.8,
-                reasoning="low" if (proactive or factual) else None,
+                reasoning="high" if proactive else ("low" if factual else None),
             )
         elif images:
             # 描述失败：退回单次视觉调用（仍带打标线索 + 媒体说明）
@@ -3156,7 +3164,7 @@ async def persona_reply(
             reply = await persona.generate(
                 history, model_text, scope,
                 temperature=0.5 if factual else 0.8,
-                reasoning="low" if (proactive or factual) else None,
+                reasoning="high" if proactive else ("low" if factual else None),
             )
     elif images:
         if hints:
@@ -3168,7 +3176,7 @@ async def persona_reply(
         reply = await persona.generate(
             history, model_text, scope,
             temperature=0.5 if factual else 0.8,
-            reasoning="low" if (proactive or factual) else None,
+            reasoning="high" if proactive else ("low" if factual else None),
         )
     if not reply:
         log.info("[人格] 本轮无回复: scope=%s", scope)
