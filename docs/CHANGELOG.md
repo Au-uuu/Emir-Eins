@@ -85,6 +85,7 @@
 | 2026-11-01 | 明日方舟数据扩展：面板按等级插值、天赋、模组效果、敌人档案、企鹅物流材料掉率、每日更新检查、快照构建脚本 | [arkdata-expansion](changes/2026-11-01-arkdata-expansion.md) |
 | 2026-11-01 | B 站链接解析（官方接口 + 抽帧）、独立全局梗库（联网查梗/对话学习/后台补梗）、Webhook 现状调研 | [bili-and-meme](changes/2026-11-01-bili-and-meme.md) |
 | 2026-11-02 | 事实类回答单次开 `low` 思考强度（闲聊仍关闭）；`max_tokens` 提到 4096；实测 `high` 60 秒且更易答错 | [reasoning-effort](changes/2026-11-02-reasoning-effort.md) |
+| 2026-11-12 | 「添加」支持先发图再发命令：按会话+用户缓存最近一张图 10 分钟；修单聊 `uploader_id` 为 `author_openid` | [add-recent-image](changes/2026-11-12-add-recent-image.md) |
 
 ## 约定
 

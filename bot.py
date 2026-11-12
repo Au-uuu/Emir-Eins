@@ -414,7 +414,7 @@ HELP_TEXT = (
     "【梗库】/梗 查 词　联网查梗并记下；/梗　看最近收录　更多用法：/help 梗\n"
     "【接话】/接话 [5%|0.03|关|默认]　调整本群随机接话概率\n"
     "\n"
-    "【收藏】/添加 关键词…　引用一张图片后回复；同消息附图须带「/」\n"
+    "【收藏】/添加 关键词…　引用一张图片后回复；也可以先发图，再发「添加 关键词」（10 分钟内）\n"
     "【批量】/批量添加 关键词　一次最多 5 张，把消息里的图片入库\n"
     "【删除】/删除 图库名 [私有/公开/全部]　先「引用一张图片」再回复；默认全部\n"
     "【取图】/来只 [关键词] [私有/公开/全部]　随机发一张图；默认全部\n"
@@ -429,9 +429,9 @@ HELP_TEXT = (
     "\n"
     "详查：/help r6　/help 图库　/help 公告　/help 名片（某条指令的完整用法）\n"
     "\n"
-    "快捷：只有「添加 / 删除 / 来只」可省略斜杠（添加、删除需引用图片），\n"
+    "快捷：只有「添加 / 删除 / 来只」可省略斜杠（添加/删除需引用图片，或 10 分钟内刚发过图），\n"
     "　　　其余指令必须带「/」。图库名不能是纯数字。\n"
-    "用法：长按图片选「引用」，再回复「/添加 关键词」。"
+    "用法：长按图片选「引用」，再回复「/添加 关键词」；单聊也可以先发图，再直接发「添加 关键词」。"
 )
 
 # 人格要能答「怎么删除图库」这类自身用法问题：把同一份 HELP_TEXT 注入系统
@@ -491,8 +491,8 @@ HELP_TOPICS = {
         "　　　　/图库 关键词 [页码]　预览图（每页 8 张，查不到会推荐相关词）\n"
         "　　　　/图库 统计　统计信息\n"
         "\n"
-        "存图：/添加 关键词…　（引用一张图片后回复；同一条消息附图要写成 /添加）\n"
-        "　　　/批量添加 关键词　一次最多 5 张，把消息里的图都入库\n"
+        "存图：/添加 关键词…　（引用一张图片后回复；单聊也可以先发图，再发「添加 关键词」，10 分钟内有效）\n"
+        "　　　同一消息附图要写成 /添加；/批量添加 关键词　一次最多 5 张，把消息里的图都入库\n"
         "删图：/删除 图库名 [私有/公开/全部]　（先引用一张图片再回复，默认全部）\n"
         "取图：/来只 [关键词] [私有/公开/全部]　随机发一张，默认全部\n"
         "\n"
@@ -833,6 +833,45 @@ def collect_image_attachments(message) -> list:
     raw = get_raw(message)
     _collect_images_from_elements(raw.get("msg_elements"), out)
     return out
+
+
+# 「先发图，再发『添加 关键词』」的兜底：按 (scope, scene, 用户) 记最近一张图，
+# 默认 10 分钟内有效。QQ 单聊里引用图片很别扭，用户经常是图、命令分两条发；
+# 没有这个缓存时 do_add_image 只能回「没有图片」，看起来就像指令没识别。
+_RECENT_IMAGES: "OrderedDict[tuple[str, str, str], tuple[float, AttachmentView]]" = OrderedDict()
+RECENT_IMAGE_TTL = 600.0
+RECENT_IMAGE_MAX = 500
+
+
+def remember_recent_image(scope: str, scene_id: str, openid: str, message) -> None:
+    """记住本条消息里的最后一张图，供紧接着的「添加」使用。"""
+    atts = collect_image_attachments(message)
+    if not atts:
+        return
+    key = (scope, scene_id or "", openid or "")
+    _RECENT_IMAGES[key] = (time.monotonic(), atts[-1])
+    now = time.monotonic()
+    while _RECENT_IMAGES:
+        _, (ts, _) = next(iter(_RECENT_IMAGES.items()))
+        if now - ts > RECENT_IMAGE_TTL:
+            _RECENT_IMAGES.popitem(last=False)
+        else:
+            break
+    while len(_RECENT_IMAGES) > RECENT_IMAGE_MAX:
+        _RECENT_IMAGES.popitem(last=False)
+
+
+def recall_recent_image(scope: str, scene_id: str, openid: str) -> AttachmentView | None:
+    """取同一会话、同一用户最近发过的图片；过期返 None。"""
+    key = (scope, scene_id or "", openid or "")
+    hit = _RECENT_IMAGES.get(key)
+    if not hit:
+        return None
+    ts, att = hit
+    if time.monotonic() - ts > RECENT_IMAGE_TTL:
+        _RECENT_IMAGES.pop(key, None)
+        return None
+    return att
 
 
 _VIDEO_EXTS = (".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi")
@@ -1287,10 +1326,16 @@ async def do_add_image(message, api, scope: str, scene_id: str, text: str) -> No
       1. 引用一条图片消息，再回复「添加 关键词」（主要用法）
       2. 图片和文字一起发（部分客户端支持）
     """
+    uploader_id = author_openid(message)
     att, source = resolve_image_attachment(message)
     if att is None or not getattr(att, "url", None):
-        # 必须是「引用一条图片消息」才会入库；没引用图片时保持安静，
-        # 否则在全量模式的群里任何一句「添加 xxx」都会触发一条错误提示。
+        # 兜底：先发图、再发「添加 关键词」时，用同一用户 10 分钟内最近一张图。
+        # 单聊里引用图片很别扭，用户经常分两条发；没有兜底会误以为指令没识别。
+        att = recall_recent_image(scope, scene_id, uploader_id)
+        if att is not None and getattr(att, "url", None):
+            source = "最近发送的图片"
+    if att is None or not getattr(att, "url", None):
+        # 没有任何图片时保持安静，否则全量模式下任何一句「添加 xxx」都会刷屏。
         log.info("[添加] 本条消息没有图片，忽略")
         return
 
@@ -1300,7 +1345,6 @@ async def do_add_image(message, api, scope: str, scene_id: str, text: str) -> No
         return
 
     keywords = split_keywords(ADD_RE.match(text).group(1) if ADD_RE.match(text) else "")
-    uploader_id = getattr(getattr(message, "author", None), "member_openid", None)
 
     log.info("[添加] 图片来源=%s 关键词=%s", source, keywords)
 
@@ -1332,7 +1376,11 @@ async def do_add_image(message, api, scope: str, scene_id: str, text: str) -> No
         else "（未关联关键词）"
     )
     size_kb = result.size / 1024
-    src_note = "（来自引用的图片）" if source == "引用的图片消息" else ""
+    src_note = ""
+    if source == "引用的图片消息":
+        src_note = "（来自引用的图片）"
+    elif source == "最近发送的图片":
+        src_note = "（来自最近发送的图片）"
     fmt = (result.mime or "").replace("image/", "").upper() or "未知"
     if result.mime == "image/gif":
         fmt += " 动图"
@@ -3724,6 +3772,9 @@ class MyClient(botpy.Client):
             content,
             " [+图片]" if has_image else "",
         )
+        remember_recent_image(
+            "group", message.group_openid, author_openid(message), message
+        )
 
         try:
             # 只有 @ 没有任何内容 → 视为 /help；但 @ 了还带图且开了看图，
@@ -3821,6 +3872,9 @@ class MyClient(botpy.Client):
             content[:60],
             " [+@本机]" if mentions_me else "",
         )
+        remember_recent_image(
+            "group", message.group_openid, author_openid(message), message
+        )
 
         # 图片指令加一道群级限流，防止群里被连续刷（/来只 另有一层 3 秒限流）
         if (
@@ -3903,6 +3957,9 @@ class MyClient(botpy.Client):
 
         openid = getattr(message.author, "user_openid", None) or getattr(
             message.author, "member_openid", None
+        )
+        remember_recent_image(
+            "c2c", openid or "", author_openid(message) or openid or "", message
         )
 
         try:
