@@ -19,6 +19,7 @@ import random
 import re
 import tempfile
 import time
+import urllib.parse
 from collections import OrderedDict
 
 import botpy
@@ -714,21 +715,33 @@ def author_openid(message) -> str:
 _IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
 
 
-def _looks_like_image(content_type, filename, url) -> bool:
+def _looks_like_image(content_type, filename, url, width=None, height=None) -> bool:
     """
     判断是不是图片附件。
 
-    QQ 的附件有时 content_type 为空或标错，所以 content_type 不是唯一依据，
-    再看文件名/URL 的扩展名兜底。
+    QQ 的附件有时 content_type 为空或标错，所以 content_type 不是唯一依据：
+    - 图片附件通常带 width/height（官方文档：非图片附件无此字段）；
+    - 再看文件名/URL 扩展名；
+    - 最后认 QQ 图片 CDN 域名（引用消息里的 URL 常常没有扩展名）。
     """
     ct = (content_type or "").lower()
+    if ct.startswith("video/") or ct == "video":
+        return False
     if ct.startswith("image/"):
+        return True
+    if width or height:
         return True
     name = (filename or "").lower()
     if name.endswith(_IMAGE_EXTS):
         return True
-    path = (url or "").lower().split("?")[0]
-    return path.endswith(_IMAGE_EXTS)
+    clean = (url or "").lower().split("?")[0]
+    if clean.endswith(_IMAGE_EXTS):
+        return True
+    host = urllib.parse.urlparse(url or "").hostname or ""
+    return any(
+        host == h or host.endswith("." + h)
+        for h in ("qpic.cn", "qlogo.cn", "gtimg.cn")
+    )
 
 
 def pick_image_attachment(attachments) -> object | None:
@@ -738,6 +751,8 @@ def pick_image_attachment(attachments) -> object | None:
             getattr(att, "content_type", ""),
             getattr(att, "filename", ""),
             getattr(att, "url", ""),
+            getattr(att, "width", None),
+            getattr(att, "height", None),
         ):
             return att
     return None
@@ -759,7 +774,11 @@ def _find_image_in_elements(elements, depth: int = 0) -> dict | None:
             if not isinstance(att, dict):
                 continue
             if att.get("url") and _looks_like_image(
-                att.get("content_type"), att.get("filename"), att.get("url")
+                att.get("content_type"),
+                att.get("filename"),
+                att.get("url"),
+                att.get("width"),
+                att.get("height"),
             ):
                 return att
         # 嵌套元素（聊天记录、引用里再引用）
@@ -812,7 +831,11 @@ def _collect_images_from_elements(elements, out: list, depth: int = 0) -> None:
             if not isinstance(att, dict):
                 continue
             if att.get("url") and _looks_like_image(
-                att.get("content_type"), att.get("filename"), att.get("url")
+                att.get("content_type"),
+                att.get("filename"),
+                att.get("url"),
+                att.get("width"),
+                att.get("height"),
             ):
                 out.append(AttachmentView(att))
         _collect_images_from_elements(el.get("msg_elements"), out, depth + 1)
@@ -1315,17 +1338,64 @@ async def _reply_image_bytes(
             pass
 
 
-async def do_add_image(message, api, scope: str, scene_id: str, text: str) -> None:
+_PENDING_ADDS: set[str] = set()
+
+
+def _is_quote_message(message) -> bool:
+    """本条消息是不是引用消息（message_type=103 / 有 msg_elements）。"""
+    raw = get_raw(message)
+    if not isinstance(raw, dict):
+        return False
+    return bool(raw.get("msg_elements")) or raw.get("message_type") == 103
+
+
+async def _retry_add_image(
+    message, api, scope: str, scene_id: str, text: str
+) -> None:
+    """
+    引用图片在首包没带附件时，短时间内重试。
+
+    QQ 的相同 msg_id 可能重复推送，后一次可能补上被引用的图片；
+    raw_events 会按 msg_id 覆盖 payload，所以这里重新读 resolve_image_attachment
+    就能看到更新后的图。最多约 8 秒，仍拿不到就回一句让用户重新引用。
+    """
+    try:
+        for attempt, delay in enumerate((0.6, 1.2, 2.4, 4.0), 1):
+            await asyncio.sleep(delay)
+            if await do_add_image(
+                message, api, scope, scene_id, text, _attempt=attempt
+            ):
+                log.info("[添加] 第 %d 次重试成功：msg_id=%s", attempt, message.id)
+                return
+        log.warning("[添加] 重试超时，仍未拿到引用图片：msg_id=%s", message.id)
+        try:
+            await message.reply(
+                content="没读到引用的图片（可能引用的是文字，或图片还没加载出来）。"
+                "请确认引用的是图片，或重新引用后再发「添加 关键词」。"
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("[添加] 超时提示发送失败：%s", exc)
+    finally:
+        _PENDING_ADDS.discard(message.id)
+
+
+async def do_add_image(
+    message, api, scope: str, scene_id: str, text: str, _attempt: int = 0
+) -> bool:
     """
     处理「添加」指令（不带斜杠）。
 
     只有在能拿到图片时才回复；拿不到图（例如群里有人随便打了句「添加 猫」）
     就静默忽略，避免在全量模式的群里刷屏。
 
-    两种图片来源都支持：
+    图片来源：
       1. 引用一条图片消息，再回复「添加 关键词」（主要用法）
       2. 图片和文字一起发（部分客户端支持）
+      3. 先发图、再发「添加 关键词」（10 分钟内最近一张图）
+
+    返回 True 表示已经处理并回复；False 表示没图、未回复。
     """
+    keywords = split_keywords(ADD_RE.match(text).group(1) if ADD_RE.match(text) else "")
     uploader_id = author_openid(message)
     att, source = resolve_image_attachment(message)
     if att is None or not getattr(att, "url", None):
@@ -1335,16 +1405,44 @@ async def do_add_image(message, api, scope: str, scene_id: str, text: str) -> No
         if att is not None and getattr(att, "url", None):
             source = "最近发送的图片"
     if att is None or not getattr(att, "url", None):
+        # 引用消息可能首包没带图片，后续重复推送才补上；短时间内重试几次。
+        if _attempt == 0 and _is_quote_message(message):
+            raw = get_raw(message) or {}
+            elements = raw.get("msg_elements") or []
+            atts = []
+            for el in elements:
+                if not isinstance(el, dict):
+                    continue
+                for a in el.get("attachments") or []:
+                    if isinstance(a, dict):
+                        atts.append({
+                            k: a.get(k)
+                            for k in ("content_type", "filename", "width", "height", "size")
+                        })
+            log.info(
+                "[添加] 引用消息无图：msg_id=%s elements=%d attachments=%s",
+                message.id, len(elements), atts[:3],
+            )
+        if (
+            _attempt == 0
+            and keywords
+            and _is_quote_message(message)
+            and message.id not in _PENDING_ADDS
+        ):
+            _PENDING_ADDS.add(message.id)
+            log.info("[添加] 引用首包没有图片，开始重试：msg_id=%s", message.id)
+            asyncio.create_task(
+                _retry_add_image(message, api, scope, scene_id, text)
+            )
+            return False
         # 没有任何图片时保持安静，否则全量模式下任何一句「添加 xxx」都会刷屏。
         log.info("[添加] 本条消息没有图片，忽略")
-        return
+        return False
 
     # 同一条消息里「附带」的图片，必须用带斜杠的 /添加（引用图片时才可以省略斜杠）
     if source == "本条消息" and not text.strip().startswith("/"):
         log.info("[添加] 同消息附图但未带斜杠，忽略")
-        return
-
-    keywords = split_keywords(ADD_RE.match(text).group(1) if ADD_RE.match(text) else "")
+        return False
 
     log.info("[添加] 图片来源=%s 关键词=%s", source, keywords)
 
@@ -1360,11 +1458,11 @@ async def do_add_image(message, api, scope: str, scene_id: str, text: str) -> No
         )
     except ValueError as exc:
         await message.reply(content=f"入库失败：{exc}")
-        return
+        return True
     except Exception as exc:  # noqa: BLE001
         log.exception("下载或保存图片失败: %s", exc)
         await message.reply(content=f"下载图片失败：{exc}")
-        return
+        return True
 
     # 关键词后面带（已存 N 张）：让人添加完就知道这个库现在多大
     counts = await store.keyword_counts(result.keywords, group_openid)
@@ -1413,6 +1511,7 @@ async def do_add_image(message, api, scope: str, scene_id: str, text: str) -> No
         result.newly_linked,
     )
     await message.reply(content=body)
+    return True
 
 
 async def do_batch_add(message, api, scope: str, scene_id: str, text: str) -> None:

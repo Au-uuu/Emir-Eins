@@ -94,6 +94,31 @@ async def main() -> int:
         expired = Msg("m4", "添加疯狂星期四", [], "U1")
         await bot.do_add_image(expired, None, "c2c", "U1", "添加疯狂星期四")
         check("过期图片不再使用", not calls, calls)
+
+        # 引用消息首包没图，后续重复推送补上 → 短重试能接住
+        calls.clear()
+        raw = {"message_type": 103, "msg_elements": [{"content": "[图片]"}]}
+        orig_get_raw = bot.get_raw
+        bot.get_raw = lambda m: raw
+        quote = Msg("q1", "添加疯狂星期四", [], "U1")
+        try:
+            first = await bot.do_add_image(
+                quote, None, "c2c", "U1", "添加疯狂星期四"
+            )
+            check("首包无图时进入重试", first is False and not calls, calls)
+            raw["msg_elements"] = [{
+                "attachments": [{
+                    "url": "http://img/q.png",
+                    "width": 100,
+                    "height": 100,
+                }]
+            }]
+            await asyncio.sleep(0.9)
+            check("重试拿到引用图片", calls.get("url") == "http://img/q.png", calls)
+            check("重试成功有回复", any("入库成功" in str(r) for r in quote.replies), quote.replies)
+        finally:
+            bot.get_raw = orig_get_raw
+            bot._PENDING_ADDS.clear()
     finally:
         bot.store = orig_store
 
