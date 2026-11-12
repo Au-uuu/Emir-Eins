@@ -88,6 +88,7 @@
 | 2026-11-12 | 「添加」支持先发图再发命令：按会话+用户缓存最近一张图 10 分钟；修单聊 `uploader_id` 为 `author_openid` | [add-recent-image](changes/2026-11-12-add-recent-image.md) |
 | 2026-11-12 | 引用图片首包无附件时重试约 8 秒；图片识别增加 `width/height` 与 QQ 图片 CDN 域名 | [add-recent-image](changes/2026-11-12-add-recent-image.md) |
 | 2026-11-12 | 用量日报去掉 openid Top；只列花费 >¥0.5 的群并显示群名（缓存 `data/group_names.json`） | [usage-report-top](changes/2026-11-12-usage-report-top.md) |
+| 2026-11-12 | 网盘图库备份增加 `gallery/` 可读视图：按公开/群+关键词分文件夹、文件名带序号/关键词/SHA、`_索引.csv` | [readable-gallery-backup](changes/2026-11-12-readable-gallery-backup.md) |
 
 ## 约定
 

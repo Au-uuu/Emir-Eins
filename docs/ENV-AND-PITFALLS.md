@@ -81,7 +81,9 @@
 | `data/kb/` | 本地知识库语料（`*.md`，`_` 开头不索引） | ❌ 见 §5.3 |
 | `data/help_bg.jpg` | 帮助图背景 | 可删（退回文本帮助） |
 
-> 备份：`deploy/backup-nutstore.sh` 会把 `images/ thumbs/ images.db kb/` 同步到坚果云。
+> 备份：`deploy/backup-nutstore.sh` 会把 `images/ thumbs/ images.db kb/` 同步到坚果云；
+> 并生成可读视图 `gallery/`（按公开/群、关键词分文件夹 + `_索引.csv`），
+> 由 `deploy/export_gallery_readable.py` 从 `images.db` 重建。可用 `QQBOT_READABLE_GALLERY=0` 关闭。
 
 ### 1.5 关键配置（`.env`）
 

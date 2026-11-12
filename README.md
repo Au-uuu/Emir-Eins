@@ -493,7 +493,10 @@ botpy 的 WebSocket **可能静默失效**：进程活着、心跳循环还在�
 
 - **脚本**：`deploy/backup-nutstore.sh`
 - **定时**：root 的 crontab，每天 **03:30**
-- **目标**：坚果云 `我的坚果云/qqbot-backup/`（含 `images/`、`thumbs/`、`images.db`）
+- **目标**：坚果云 `我的坚果云/qqbot-backup/`（含 `images/`、`thumbs/`、`images.db`、`kb/`、`gallery/`）
+- **可读图库**：`gallery/` 由 `images.db` 生成，按 `公开/关键词/`、`群_群名/关键词/`
+  分文件夹，文件名形如 `001_蓝色大肥鱼_96b6e917.jpg`，另附 `_索引.csv` 和 `_说明.md`；
+  原图 `images/` 仍按 SHA-256 保存，`gallery/` 只是方便浏览的派生视图
 - **日志**：`/var/log/qqbot-backup.log`
 - **凭据**：服务器 `/root/.config/rclone/rclone.conf`（权限 600）
 
@@ -503,6 +506,10 @@ botpy 的 WebSocket **可能静默失效**：进程活着、心跳循环还在�
 - **远端只增不减**：用 `rclone copy` 而不是 `sync` —— 服务器上误删的图，云上仍然保留
 - **数据库一致性**：用 SQLite 在线备份 API 先取快照再上传，避免抓到写一半的库
 - **防重入**：`flock`，上一次没跑完就跳过本次
+- **可读图库**：`gallery/` 用 `rclone sync` 保持云端目录整洁；它只是派生视图，
+  原图 `images/` 仍然只增不减。首次生成/上传约 260 个文件，为避开坚果云
+  600 次/30 分钟限制，`gallery` 同步用了 `--tpslimit 0.3`，第一次会比较慢。
+  不需要可读视图时设 `QQBOT_READABLE_GALLERY=0`。
 
 手动跑一次（`--dry` 为演练，不实际传输）：
 

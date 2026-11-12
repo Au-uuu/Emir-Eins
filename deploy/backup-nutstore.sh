@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # 坚果云 WebDAV 增量备份：/opt/qqbot/data -> nutstore:qqbot-backup/
-#   （images/ + thumbs/ + images.db + kb/；其中 kb 是知识库条目，服务器上的唯一副本）
+#   （images/ + thumbs/ + images.db + kb/ + gallery/；其中 kb 是知识库条目，
+#     gallery 是由 images.db 生成的人类可读视图）
 #
 # 设计要点：
 #   1. 图片按 SHA-256 命名、内容永不改变，所以增量上传只会传新增文件
@@ -24,6 +25,7 @@ STAGE="${QQBOT_STAGE_DIR:-/var/lib/qqbot-backup}"
 LOG="${QQBOT_BACKUP_LOG:-/var/log/qqbot-backup.log}"
 LOCK="/var/run/qqbot-backup.lock"
 PY="${QQBOT_PYTHON:-/opt/qqbot/.venv/bin/python}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 DRY=""
 [ "${1:-}" = "--dry" ] && DRY="--dry-run"
@@ -86,6 +88,32 @@ then
 else
     echo "!! 数据库快照失败，云端保留上一次的版本"
     rc=1
+fi
+
+# --- 3) 人类可读图库：按公开/群、关键词分文件夹 + 索引 ---
+# 原图 images/ 仍然按 SHA 备份；gallery/ 只是由 images.db 生成的可读视图。
+if [ "${QQBOT_READABLE_GALLERY:-1}" != "0" ] && [ -f "$DATA_DIR/images.db" ]; then
+    echo "--- 生成可读图库 ---"
+    rm -rf "$STAGE/gallery"
+    if "$PY" "$SCRIPT_DIR/export_gallery_readable.py" \
+        --data-dir "$DATA_DIR" --out "$STAGE/gallery" \
+        --env "${QQBOT_ENV:-/opt/qqbot/.env}"; then
+        if [ -f "$STAGE/gallery/_索引.csv" ]; then
+            echo "--- 同步 gallery（可读图库）---"
+            # gallery 是派生视图，用 sync 让云端目录保持整洁；原图 images/ 仍是只增不减。
+            rclone sync "$STAGE/gallery" "$REMOTE/gallery" \
+                --transfers 2 --checkers 4 \
+                --tpslimit 0.3 --tpslimit-burst 1 \
+                --retries 5 --low-level-retries 10 \
+                -v $DRY || rc=$?
+        else
+            echo "!! 可读图库没有生成索引，跳过同步"
+            rc=1
+        fi
+    else
+        echo "!! 可读图库生成失败，跳过 gallery 同步（images/ 原始备份不受影响）"
+        rc=1
+    fi
 fi
 
 if [ "$rc" -ne 0 ]; then
