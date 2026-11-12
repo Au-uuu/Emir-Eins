@@ -456,7 +456,7 @@ $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($py))
 
 | 项 | 说明 |
 |---|---|
-| `QQ_BOT_R6_KEY_EXPIRE` | 已换新 key（2026-11-12）；API 报告 free 计划额度重置日 `2026-12-01`，`R6_KEY_EXPIRE` 暂按这个填；实际到期日不同再改 |
+| `QQ_BOT_R6_KEY_EXPIRE` | 已换新 key（2026-11-12），90 天有效期 → `2027-02-10`；API 额度重置日 `2026-12-01`，管理员会在到期前 7 天提醒 |
 | Arenyze 用量 | 定期跑 `/me/usage`，若长期吃紧：① 去掉常用干员改 1 call/查 ② 或上 PRO（€3.99/月，50,000 次） |
 | 公告关键词 | 若活动推送太吵/太少，改 `.env` 的 `QQ_BOT_NEWS_KEYWORDS` 后重启 |
 | 群主权限 | 开「机器人主动发言」可解除每月 4 条主动消息限制 |
