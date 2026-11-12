@@ -111,6 +111,7 @@
 | `QQ_BOT_BILI*` | B 站解析：`BILI=1`、`MAX_MB=40`、`INTERVAL=10`、`MIN_FRAMES=9`、`MAX_FRAMES=24` |
 | `QQ_BOT_MEME*` | 梗库：`MEME=1`、`SEARCH=1`、`AUTO=1`、`CONF=0.55`、`DB=data/meme.db` |
 | `QQ_BOT_USAGE` | 用量账本开关（默认 1）；`/用量 [天数]` 查看 |
+| `QQ_BOT_USAGE_REPORT_TOP_CNY` | 日报按群花费显示门槛（默认 `0.5` 元）；只列超过门槛的群，并尽量显示群名（`data/group_names.json` 缓存） |
 | `QQ_BOT_R6_KEY` / `QQ_BOT_R6_KEY_EXPIRE` | Arenyze key 与到期日（到期前管理员会被私聊提醒） |
 | `QQ_BOT_R6_TIMEOUT` | R6 接口超时秒数（默认 25） |
 | `QQ_BOT_NEWS_POLL_MINUTES` | 公告轮询间隔（`0` = 关闭主动推送） |

@@ -356,6 +356,7 @@ QQ_BOT_RANDOM_REPLY_COOLDOWN=300  # 同群两次随机接话至少隔 5 分钟
   `/梗 添加 词 解释`、`/梗 删 词`。聊天里问「X 是什么梗」也会在后台学习。
 - `/用量 [天数]`：管理员查看调用次数/token/费用（默认今天）。
 - 每日用量日报：`QQ_BOT_USAGE_REPORT=1`、`QQ_BOT_USAGE_REPORT_HOUR=9`、`QQ_BOT_ADMIN_GROUP=<群 openid>`；每天固定时间把前一天的调用/token/花费发到管理员群。
+  只有花费超过 `QQ_BOT_USAGE_REPORT_TOP_CNY`（默认 ¥0.5）的群才列出，并尽量显示群名（缓存 `data/group_names.json`）。
   若群未开「机器人主动发言」导致主动发送失败，日报会存为待补发，下次有人在群里说话时用被动回复补发。
 - 自然语言提到功能时，bot 只用人设口吻提示对应指令（如“要图就 /来只 猫”），
   **不自动映射、不假装执行**。

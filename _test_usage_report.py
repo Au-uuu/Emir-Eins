@@ -19,6 +19,7 @@ os.environ["QQ_BOT_USAGE_REPORT"] = "1"
 os.environ["QQ_BOT_USAGE_REPORT_HOUR"] = "9"
 os.environ["QQ_BOT_ADMIN_GROUP"] = "GADMIN"
 os.environ["QQ_BOT_USAGE_REPORT_STATE"] = os.path.join(TMP, "state.json")
+os.environ["QQ_BOT_USAGE_REPORT_TOP_CNY"] = "0.01"
 
 import usage_report  # noqa: E402
 import usage_store  # noqa: E402
@@ -81,7 +82,24 @@ async def main() -> int:
     check("输出 60", "输出 60" in text, text)
     check("费用合计", "$0.0350" in text, text)
     check("包含类型", "对话 1" in text and "看图 1" in text and "学习 1" in text, text)
-    check("包含会话 Top", "群 A" in text and "单聊 B" in text, text)
+    check("包含高用量群", "高用量群" in text and "群 A" in text, text)
+    check("不显示单聊/低额", "单聊 B" not in text and "memory" not in text, text)
+
+    os.environ["QQ_BOT_USAGE_REPORT_TOP_CNY"] = "0.5"
+    text_high = await usage_report.build_report(store, day)
+    check("默认 0.5 元以下不显示 Top", "高用量群" not in text_high, text_high)
+    os.environ["QQ_BOT_USAGE_REPORT_TOP_CNY"] = "0.01"
+
+    class NamedHttp:
+        async def request(self, route):
+            return {"group_name": "测试群"}
+
+    class NamedApi(FakeApi):
+        _http = NamedHttp()
+
+    usage_report._GROUP_NAMES_PATH = os.path.join(TMP, "group_names.json")
+    text_named = await usage_report.build_report(store, day, api=NamedApi())
+    check("能显示群名字", "测试群" in text_named, text_named)
 
     print("[2] 到点发送 + 当天去重")
     api = FakeApi()

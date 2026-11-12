@@ -39,6 +39,67 @@ _KIND_NAMES = {
     "summary": "摘要",
 }
 
+_CNY_PER_USD = 7.2
+_GROUP_NAMES_PATH = os.path.join(DATA_DIR, "group_names.json")
+
+
+def top_cny() -> float:
+    """日报里只显示花费超过这个人民币金额的群；默认 ¥0.5。"""
+    try:
+        value = float(os.getenv("QQ_BOT_USAGE_REPORT_TOP_CNY", "0.5") or 0.5)
+    except ValueError:
+        value = 0.5
+    return max(0.0, value)
+
+
+def _load_group_names() -> dict:
+    try:
+        with open(_GROUP_NAMES_PATH, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_group_names(data: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(_GROUP_NAMES_PATH) or ".", exist_ok=True)
+        tmp = _GROUP_NAMES_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=2)
+        os.replace(tmp, _GROUP_NAMES_PATH)
+    except OSError as exc:
+        log.warning("[日报] 群名缓存写入失败：%s", exc)
+
+
+async def _group_name(api, group_openid: str) -> str:
+    """查群名（缓存到 data/group_names.json）；拿不到返回空串。"""
+    if not group_openid:
+        return ""
+    cache = _load_group_names()
+    if group_openid in cache:
+        return str(cache[group_openid] or "")
+    if api is None or not hasattr(api, "_http"):
+        return ""
+    try:
+        from botpy.http import Route
+
+        data = await api._http.request(
+            Route(
+                "GET",
+                "/v2/groups/{group_openid}/info",
+                group_openid=group_openid,
+            )
+        )
+        name = str((data or {}).get("group_name") or "").strip()
+        if name:
+            cache[group_openid] = name
+            _save_group_names(cache)
+        return name
+    except Exception as exc:  # noqa: BLE001
+        log.warning("[日报] 查群名失败 %s：%s", group_openid[:8], exc)
+        return ""
+
 
 def enabled() -> bool:
     return (os.getenv("QQ_BOT_USAGE_REPORT", "1") or "1").strip().lower() not in (
@@ -106,7 +167,7 @@ def _scope_name(scope: str) -> str:
     return text or "其他"
 
 
-async def build_report(usage, day: str | None = None) -> str:
+async def build_report(usage, day: str | None = None, api=None) -> str:
     """生成某一天的日报文本；day 默认昨天。"""
     if not day:
         day = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -135,12 +196,23 @@ async def build_report(usage, day: str | None = None) -> str:
     ]
     if kinds:
         lines.append("类型：" + " / ".join(kinds))
-    scopes = [
-        f"{_scope_name(s.get('scope') or '')} ${float(s.get('cost') or 0):.4f}"
-        for s in (data.get("scopes") or [])[:5]
-    ]
+    threshold = top_cny()
+    scopes: list[str] = []
+    for s in data.get("scopes") or []:
+        scope = str(s.get("scope") or "")
+        if not scope.startswith("group:"):
+            continue
+        cost = float(s.get("cost") or 0)
+        if cost * _CNY_PER_USD < threshold:
+            continue
+        gid = scope.split(":", 1)[1]
+        name = await _group_name(api, gid) if api else ""
+        label = name or f"群 {gid[:8]}"
+        scopes.append(f"{label} ¥{cost * _CNY_PER_USD:.2f}")
+        if len(scopes) >= 5:
+            break
     if scopes:
-        lines.append("Top：" + " / ".join(scopes))
+        lines.append(f"高用量群（>¥{threshold:g}）：" + " / ".join(scopes))
     return "\n".join(lines)
 
 
@@ -162,7 +234,7 @@ async def maybe_send(api, usage, now: datetime | None = None) -> bool:
         return False
 
     report_day = (now - timedelta(days=1)).strftime("%Y-%m-%d")
-    text = await build_report(usage, report_day)
+    text = await build_report(usage, report_day, api=api)
     state["last_attempt"] = today
     try:
         await api.post_group_message(group_openid=gid, content=text)
