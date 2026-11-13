@@ -443,7 +443,8 @@ async def main() -> int:
         "图片传给了模型",
         len(seen.get("images", [])) == 1 and seen["images"][0][0] == "image/png",
     )
-    check("文字一并传给模型", seen.get("text") == "这张图是什么")
+    check("文字一并传给模型", "这张图是什么" in seen.get("text", ""), seen.get("text", ""))
+    check("新图独立说明", "【媒体说明】" in seen.get("text", ""), seen.get("text", "")[:80])
     check("上下文照常记录", len(await bot.chat.history("group:V1")) == 2)
 
     m = ImgMessage("", [make_att()])
@@ -534,6 +535,9 @@ async def main() -> int:
     )
     check("两阶段：回复来自文本链路", "本机也在" in m.text, m.text)
     check("两阶段：未走单次视觉链路", vcalls["n"] == 0)
+    check("新图默认独立，不当上一张订正", not bot.is_related_media_reference("这是什么"))
+    check("明确说和刚才有关才关联", bot.is_related_media_reference("这张和刚才那张比"))
+    check("新图提示独立话题", "【媒体说明】" in desc_seen.get("text", ""), desc_seen.get("text", "")[:80])
 
     # describe 失败 → 退回单次视觉调用
     async def fail_describe(images, video_url=None, hint_text="", session=""):

@@ -154,6 +154,19 @@ VIDEO_MEDIA_NOTE = (
     "【媒体说明】这条消息是一个**视频**，前面 {n} 张图是按时间顺序从视频里抽出的"
     "画面帧，不是独立图片。请连起来理解视频内容，不要逐帧描述。"
 )
+MEDIA_NEW_TOPIC_NOTE = (
+    "【媒体说明】这是用户**新发的一条独立图片/视频**，不是上一张图的续帧，"
+    "也不是对上一轮回答的订正。除非用户明确引用上一张图、说「这张和刚才那张」"
+    "或「同一张」，否则不要沿用上一轮的话题，按这条内容重新理解。"
+)
+_RELATED_MEDIA_RE = re.compile(
+    r"刚才|上一张|前面那张|同一张|这张和|还是那张|连续|接着上一"
+)
+
+
+def is_related_media_reference(text: str) -> bool:
+    """用户是否明确在说“这张和刚才那张有关”。"""
+    return bool(_RELATED_MEDIA_RE.search(text or ""))
 
 
 def vision_media_note(meta: dict) -> str:
@@ -3161,6 +3174,8 @@ async def persona_reply(
             + topic_hint
             + model_text
         )
+    if media and not quote and not is_related_media_reference(content):
+        model_text = MEDIA_NEW_TOPIC_NOTE + "\n" + model_text
     # 离线打标线索（Camie）：已收录角色的特征→标签映射，帮模型报出角色名。
     # 视频抽帧不做打标（几十帧逐个打太慢，且视频重点通常是动作/场景）。
     hints = await tagger_hints(images) if images and not video_frames_used else ""
