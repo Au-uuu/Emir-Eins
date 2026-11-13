@@ -675,6 +675,28 @@ async def main() -> int:
     check("引用文本被抽出", "引用消息" in q and "s_hamster" in q, q[:40])
     check("引用里的 URL 被抹掉", "img.example" not in q)
 
+    m2 = FakeMessage("总结一下")
+    raw_events._remember(
+        m2.id,
+        {
+            "d": {
+                "message_type": 102,
+                "msg_elements": [
+                    {"content": "[小明和依蜜尔爱因的聊天记录]"},
+                    {
+                        "msg_elements": [
+                            {"content": "[消息1] 第一句"},
+                            {"content": "[消息2] 第二句"},
+                        ]
+                    },
+                ],
+            }
+        },
+    )
+    q2 = bot.quoted_content(m2)
+    check("嵌套聊天记录可读", "第一句" in q2 and "第二句" in q2, q2)
+    check("聊天记录标题占位被跳过", "聊天记录]" not in q2, q2)
+
     m = FakeMessage("没有引用")
     check("无引用返回空串", bot.quoted_content(m) == "")
 

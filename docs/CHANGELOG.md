@@ -90,6 +90,7 @@
 | 2026-11-12 | 用量日报去掉 openid Top；只列花费 >¥0.5 的群并显示群名（缓存 `data/group_names.json`） | [usage-report-top](changes/2026-11-12-usage-report-top.md) |
 | 2026-11-12 | 网盘图库备份增加 `gallery/` 可读视图：按公开/群+关键词分文件夹、文件名带序号/关键词/SHA、`_索引.csv` | [readable-gallery-backup](changes/2026-11-12-readable-gallery-backup.md) |
 | 2026-11-12 | 随机接话先总结当前群话题（主模型、缓存 60s、只看 10 分钟），上下文缩到 15 条并开 `high` 思考；被 @ 闲聊不开思考 | [proactive-topics](changes/2026-11-12-proactive-topics.md) |
+| 2026-11-13 | 递归解析合并转发/聊天记录；线上试关打标器与 KB，带图消息不再查 KB；新增 `QQ_BOT_TAGGER`/`QQ_BOT_KB` 开关 | [chat-record-image-experiment](changes/2026-11-13-chat-record-image-experiment.md) |
 
 ## 约定
 

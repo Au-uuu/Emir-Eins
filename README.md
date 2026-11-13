@@ -385,6 +385,7 @@ QQ_BOT_RANDOM_REPLY_COOLDOWN=300  # 同群两次随机接话至少隔 5 分钟
   主动接话只取标题、不下载视频。配置：`QQ_BOT_BILI=1`、
   `QQ_BOT_BILI_INTERVAL=10`、`QQ_BOT_BILI_MAX_FRAMES=24`。
 - 看图默认常开；只有 `QQ_BOT_VL_MODEL=off` 才会关掉。
+- 识图实验：线上暂时 `QQ_BOT_TAGGER=0`、`QQ_BOT_KB=0`，带图/视频消息不再查 KB，避免错误角色条目带偏；要恢复设回 `1` 并重启。
 - 全部图/帧都不可用时自动退回旧行为：只发图不回复、上下文记占位。
 - 图片只做即时处理，**不落盘、不进上下文数据库**；上下文里存的仍是文本。
 

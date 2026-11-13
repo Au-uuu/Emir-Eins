@@ -173,7 +173,6 @@ def vision_media_note(meta: dict) -> str:
 # 引用消息（含合并转发卡片）：QQ 平台把被引用内容合成为可读文本塞进
 # msg_elements[].content，带 [消息类型] 引用消息 标记，图片以 URL: 形式内嵌。
 QUOTE_MARKER = "[消息类型] 引用消息"
-QUOTE_TEXT_CAP = 600
 _QUOTE_URL_RE = re.compile(r"URL:(https?://\S+)")
 
 # 看门狗：超过这么久没收到任何网关消息，就认为长连接已死并重启进程（秒）
@@ -982,28 +981,51 @@ def author_display_name(message) -> str:
     return ""
 
 
+def _collect_element_texts(elements, depth: int = 0) -> list[str]:
+    """递归收集 msg_elements 里的文本（合并转发/聊天记录是嵌套结构）。"""
+    if depth > 4 or not elements:
+        return []
+    out: list[str] = []
+    for el in elements:
+        if not isinstance(el, dict):
+            continue
+        text = (el.get("content") or "").strip()
+        if text:
+            out.append(text)
+        nested = el.get("msg_elements")
+        if nested:
+            out.extend(_collect_element_texts(nested, depth + 1))
+    return out
+
+
 def quoted_content(message) -> str:
     """
     抽出「被引用消息」的平台展开文本（普通引用和合并转发卡片都适用）。
 
     QQ 平台把引用内容合成为可读文本塞进 msg_elements[].content（带
-    [消息类型] 引用消息 标记；合并转发卡片会展开成 === 消息 N === 的摘要）。
-    之前只收集引用的图片、引用的文字一直没喂给模型，导致「引用一段话/一张
-    聊天记录问什么意思」时模型两手空空只能凭记忆脑编（2026-10-07 实锤）。
-    找不到引用内容返回空串。URL 对模型无用还烧 token，抹掉（图走取图链路）。
+    [消息类型] 引用消息 标记；合并转发卡片是 message_type=102 的嵌套结构）。
+    之前只收集顶层、且必须带引用标记，导致「引用一份聊天记录问什么意思」时
+    模型看不到里面的消息。现在递归收集嵌套 msg_elements，并跳过
+    `[xxx聊天记录]` 这种只有标题的占位。
     """
     raw = get_raw(message)
-    blocks: list[str] = []
-    for el in raw.get("msg_elements") or []:
-        if not isinstance(el, dict):
-            continue
-        text = (el.get("content") or "").strip()
-        if text and QUOTE_MARKER in text:
-            blocks.append(text)
+    elements = raw.get("msg_elements") or []
+    texts = _collect_element_texts(elements)
+    if not texts:
+        return ""
+    is_record = raw.get("message_type") in (102, 103)
+    blocks = [t for t in texts if QUOTE_MARKER in t]
+    if not blocks and is_record:
+        blocks = texts
+    # 只保留「[xxx和yyy的聊天记录]」这种标题没有意义
+    blocks = [
+        t for t in blocks
+        if not re.fullmatch(r"\[[^\[\]]{0,80}聊天记录\]", t)
+    ]
     if not blocks:
         return ""
-    merged = _QUOTE_URL_RE.sub("URL:（略）", "\n".join(blocks))
-    return merged[:QUOTE_TEXT_CAP]
+    merged = _QUOTE_URL_RE.sub("URL:（略）", "\n".join(dict.fromkeys(blocks)))
+    return merged[:1200]
 
 
 def _warn_if_blank(data: bytes) -> None:
@@ -1120,7 +1142,12 @@ async def tagger_hints(images: list[tuple[str, bytes]]) -> str:
     打标器训练集截止较早，**不覆盖 2025 年后的新作**——对魔裁这类新角色只会给最像
     的近邻标签（实测把橘雪莉认成 hololive 的兔田佩克拉）。所以低置信候选只作「疑似」
     列出、明确要求与画面核对，绝不当结论。未命中/打标失败返回空串，零影响。
+    `QQ_BOT_TAGGER=0` 可关闭，便于对比打标器是否干扰识图。
     """
+    if (os.getenv("QQ_BOT_TAGGER", "1") or "1").strip().lower() in (
+        "0", "false", "off", "no", "",
+    ):
+        return ""
     try:
         chars, copies, cands = await tagger.tag_image_detail(images[0][1])
     except Exception as exc:  # noqa: BLE001
@@ -3019,8 +3046,9 @@ async def persona_reply(
             model_text = lore_ctx + model_text
             log.info("[资料] 已注入 %d 字：%s", len(lore_ctx), content[:30])
     # 本地知识库检索（RAG，轻量 BM25）：命中就拼进提示词，让事实更准
+    # 带图/视频的消息不塞 KB：图片问题容易被错误的角色条目带偏，交给视觉模型。
     kb_ctx = ""
-    if content and content != IMAGE_ONLY_PLACEHOLDER:
+    if content and content != IMAGE_ONLY_PLACEHOLDER and not media:
         kb_ctx = kb.context(content)
         if kb_ctx:
             model_text = kb_ctx + model_text

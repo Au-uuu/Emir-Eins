@@ -286,6 +286,10 @@ def search(query: str, limit: int | None = None) -> list[tuple[float, str, str]]
 
 def context(query: str) -> str:
     """把命中的知识拼成一段可注入提示词的文本；无命中返回空串。"""
+    if (os.getenv("QQ_BOT_KB", "1") or "1").strip().lower() in (
+        "0", "false", "off", "no", "",
+    ):
+        return ""
     hits = search(query)
     if not hits:
         return ""

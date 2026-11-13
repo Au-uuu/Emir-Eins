@@ -123,6 +123,8 @@
 | `QQ_BOT_NEWS_KEYWORDS` | 公告推送关键词（`\|` 分隔） |
 | `QQ_BOT_NEWS_DAILY_LIMIT` | 每群每日推送上限（防刷屏保险丝） |
 | `QQ_BOT_KB_DIR` / `QQ_BOT_KB_MIN_SCORE` / `QQ_BOT_KB_TOP` | 知识库目录 / 召回分数门槛 / 条数 |
+| `QQ_BOT_KB` | 本地知识库总开关（默认 `1`；线上实验 `0`）；`0` 时纯文本也不查 KB，人格 HELP self-manual 不受影响 |
+| `QQ_BOT_TAGGER` | 离线打标开关（默认 `1`；线上实验 `0`）；`0` 时不注入 Camie 角色/作品标签 |
 | `QQ_BOT_WEBSEARCH` / `_MODEL` / `_FRESHNESS` | 联网搜索开关/模型/只搜最近 N 天；检索走 Qwen `enable_search` + `forced_search`，DS 本身无内置搜索 |
 | ~~`QQ_BOT_UBI_*`~~ | 育碧官方 API 的账号密码（**已删除**，见 §6.6） |
 
