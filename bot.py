@@ -3173,6 +3173,7 @@ async def persona_reply(
         desc_hint = "\n".join(x for x in (media_note, hints) if x)
         desc = await persona.describe(images, video_url, desc_hint, scope)
         if desc:
+            log.info("[视觉] 描述 %d 字：%s", len(desc), desc[:180].replace("\n", " "))
             model_text = f"（视觉模型对这条内容的客观描述：\n{desc}\n）\n" + model_text
             if media_note:
                 model_text = media_note + "\n" + model_text
