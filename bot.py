@@ -154,19 +154,12 @@ VIDEO_MEDIA_NOTE = (
     "【媒体说明】这条消息是一个**视频**，前面 {n} 张图是按时间顺序从视频里抽出的"
     "画面帧，不是独立图片。请连起来理解视频内容，不要逐帧描述。"
 )
-MEDIA_NEW_TOPIC_NOTE = (
-    "【媒体说明】这是用户**新发的一条独立图片/视频**，不是上一张图的续帧，"
-    "也不是对上一轮回答的订正。除非用户明确引用上一张图、说「这张和刚才那张」"
-    "或「同一张」，否则不要沿用上一轮的话题，按这条内容重新理解。"
+MEDIA_NEW_TOPIC_NOTE = (  # 名字保留兼容旧测试；语义是“先判断”，不强制独立
+    "【话题判断】先判断当前消息是在延续上一话题，还是开启了新话题。"
+    "如果是延续，可以引用上文但不要重复；如果是新话题，按当前内容回答，"
+    "不要把上一轮的内容当成前提，也不要说「订正」。"
+    "拿不准时以当前消息为主，不要硬接旧话题。"
 )
-_RELATED_MEDIA_RE = re.compile(
-    r"刚才|上一张|前面那张|同一张|这张和|还是那张|连续|接着上一"
-)
-
-
-def is_related_media_reference(text: str) -> bool:
-    """用户是否明确在说“这张和刚才那张有关”。"""
-    return bool(_RELATED_MEDIA_RE.search(text or ""))
 
 
 def vision_media_note(meta: dict) -> str:
@@ -3174,8 +3167,9 @@ async def persona_reply(
             + topic_hint
             + model_text
         )
-    if media and not quote and not is_related_media_reference(content):
-        model_text = MEDIA_NEW_TOPIC_NOTE + "\n" + model_text
+    # 话题判断：不强行把新图/新消息当独立话题，也不让它盲目接旧话题。
+    # 让主模型结合历史自己判断“延续还是新话题”，拿不准以当前消息为主。
+    model_text = MEDIA_NEW_TOPIC_NOTE + "\n" + model_text
     # 离线打标线索（Camie）：已收录角色的特征→标签映射，帮模型报出角色名。
     # 视频抽帧不做打标（几十帧逐个打太慢，且视频重点通常是动作/场景）。
     hints = await tagger_hints(images) if images and not video_frames_used else ""
@@ -3195,7 +3189,7 @@ async def persona_reply(
             reply = await persona.generate(
                 history, model_text, scope,
                 temperature=0.5 if factual else 0.8,
-                reasoning="high" if proactive else ("low" if factual else None),
+                reasoning="high",
             )
         elif images:
             # 描述失败：退回单次视觉调用（仍带打标线索 + 媒体说明）
@@ -3208,7 +3202,7 @@ async def persona_reply(
             reply = await persona.generate(
                 history, model_text, scope,
                 temperature=0.5 if factual else 0.8,
-                reasoning="high" if proactive else ("low" if factual else None),
+                reasoning="high",
             )
     elif images:
         if hints:
@@ -3220,7 +3214,7 @@ async def persona_reply(
         reply = await persona.generate(
             history, model_text, scope,
             temperature=0.5 if factual else 0.8,
-            reasoning="high" if proactive else ("low" if factual else None),
+            reasoning="high",
         )
     if not reply:
         log.info("[人格] 本轮无回复: scope=%s", scope)

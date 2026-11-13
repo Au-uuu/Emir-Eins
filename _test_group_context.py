@@ -163,7 +163,7 @@ async def main() -> int:
         check("群聊背景进了输入", "刚才在聊终末地" in injected, injected)
         check("当前消息只出现一次", injected.count("现在呢") == 1, injected)
         check("带群聊头部", "群聊最近消息" in injected, injected)
-        check("被@闲聊不开思考", seen.get("reasoning") is None, seen.get("reasoning"))
+        check("被@也开 high 思考", seen.get("reasoning") == "high", seen.get("reasoning"))
 
         # 随机接话：先总结话题，再 low 思考
         bot.chat_cooldown.seconds = 0

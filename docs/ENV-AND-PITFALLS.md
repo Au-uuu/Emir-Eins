@@ -94,8 +94,8 @@
 | `QQ_BOT_TEXT_MODEL` | 人格文本模型（当前 `deepseek-v4.1-flash`，OpenCode Go）；**知识库构建不要占用它** |
 | `QQ_BOT_VL_MODEL` | 视觉模型（当前也是 `deepseek-v4.1-flash`，与文本同 Key/端点） |
 | `QQ_BOT_VL_DESCRIBE` | 当前 `1`（两阶段）：DS 带 6.6k 字人设单阶段看图会认错颜色，必须让视觉先做客观描述 |
-| `QQ_BOT_CHAT_MAX_TOKENS` | 当前 `4096`；DS 是推理模型，512 在复杂图/长思考时可能被 reasoning 吃光；事实类问题会单次开 `low` 思考 |
-| `QQ_BOT_TEXT_REASONING_EFFORT` | 文本思考强度 `low/high/max`；当前事实类问题代码内固定 `low`，`high` 实测 60 秒且更易答错，不建议 |
+| `QQ_BOT_CHAT_MAX_TOKENS` | 当前 `4096`；DS 是推理模型，512 在复杂图/长思考时可能被 reasoning 吃光；人格聊天统一开 `high` |
+| `QQ_BOT_TEXT_REASONING_EFFORT` | 保留配置（`low/high/max`）；当前人格聊天在代码里固定 `high`，此变量主要给其他文本调用 |
 | `QQ_BOT_CHAT_DELAY_MIN/MAX` | 人格回复前随机延迟（默认 0.5/1.8 秒）；`0/0` 关闭 |
 | `QQ_BOT_CHAT_SPLIT` | 长回复拆条开关（线上 `1`）；`SPLIT_CHARS` 默认 80，`SPLIT_MAX` 默认 2 |
 | `QQ_BOT_RANDOM_REPLY` | 群友随机接话概率（默认 `0` 完全关闭；建议 `0.02~0.05`），支持 `0.03`/`3%`/`3` |
