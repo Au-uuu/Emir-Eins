@@ -69,6 +69,31 @@ class UsageStore:
 
     # ---------------- 写入（同步，在 persona 的线程里调用） ----------------
 
+    def _direct_cost(self, usage: dict, model: str) -> float:
+        """DeepSeek 官方 API 没给 list_cost 时，用公开单价估算（默认按峰时）。"""
+        if "deepseek" not in (model or "").lower():
+            return 0.0
+        prompt = int(usage.get("prompt_tokens") or 0)
+        cached = int((usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0)
+        completion = int(usage.get("completion_tokens") or 0)
+        if "pro" in (model or "").lower():
+            default_in, default_out, default_cache = 1.32, 3.96, 0.044
+        else:
+            default_in, default_out, default_cache = 0.30, 1.20, 0.006
+        try:
+            in_rate = float(os.getenv("QQ_BOT_TEXT_COST_INPUT", "") or default_in)
+            out_rate = float(os.getenv("QQ_BOT_TEXT_COST_OUTPUT", "") or default_out)
+            cache_rate = float(
+                os.getenv("QQ_BOT_TEXT_COST_CACHE", "") or default_cache
+            )
+        except ValueError:
+            in_rate, out_rate, cache_rate = default_in, default_out, default_cache
+        return (
+            max(0, prompt - cached) / 1_000_000 * in_rate
+            + cached / 1_000_000 * cache_rate
+            + completion / 1_000_000 * out_rate
+        )
+
     def record(self, scope: str, model: str, kind: str, usage: dict) -> None:
         if not enabled() or not isinstance(usage, dict):
             return
@@ -80,6 +105,8 @@ class UsageStore:
                 (usage.get("completion_tokens_details") or {}).get("reasoning_tokens") or 0
             ))
             cost = float(oc.get("list_cost") or 0.0)
+            if cost <= 0:
+                cost = self._direct_cost(usage, model)
             with self._connect() as conn:
                 conn.execute(
                     "INSERT INTO usage(ts, scope, model, kind, prompt, completion, "

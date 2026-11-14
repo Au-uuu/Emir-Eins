@@ -266,9 +266,9 @@
 ## 人格聊天（可选）
 
 非指令的自然语言可以交给角色模型生成回复，角色卡是 `persona/依蜜尔爱因.md`。
-当前线上文本/视觉都走 **OpenCode Go 的 `deepseek-v4.1-flash`**（配置见
-`.env.example` 的 OpenCode Go 段），也可以继续用 `qwen-flash-character` / 任一
-OpenAI 兼容端点。
+当前线上文本/视觉都走 **DeepSeek 官方 API 的 `deepseek-flash`**
+（`https://api.deepseek.com/chat/completions`，配置见 `.env.example`），
+不再经过 OpenCode Go；也可以继续用 `qwen-flash-character` / 任一 OpenAI 兼容端点。
 
 **自知用法**：启动时把 `/help` 的 HELP_TEXT 注入系统提示词（`persona.set_self_manual`），
 问「怎么删除图库」「你有什么指令」这类自身用法问题时按事实回答，不再编造
@@ -371,7 +371,7 @@ QQ_BOT_RANDOM_REPLY_COOLDOWN=300  # 同群两次随机接话至少隔 5 分钟
 
 ### 看图 / 视频（默认开）
 
-线上文本和视觉都走 **DeepSeek V4.1 Flash**（OpenCode Go），两阶段看图：
+线上文本和视觉都走 **DeepSeek 官方 `deepseek-flash`**（`api.deepseek.com`），两阶段看图：
 视觉先做客观描述，再由人设链路回复。角色卡、历史、限流、敏感词过滤与纯文本一致。
 
 - 一次最多传 3 张消息图片，单张 ≤8MB；**单发一张 GIF 时会抽首/中/尾 3 帧**。

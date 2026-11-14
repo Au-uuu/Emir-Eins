@@ -91,8 +91,8 @@
 
 | 变量 | 说明 |
 |---|---|
-| `QQ_BOT_TEXT_MODEL` | 人格文本模型（当前 `deepseek-v4.1-flash`，OpenCode Go）；**知识库构建不要占用它** |
-| `QQ_BOT_VL_MODEL` | 视觉模型（当前也是 `deepseek-v4.1-flash`，与文本同 Key/端点） |
+| `QQ_BOT_TEXT_MODEL` | 人格文本模型（当前 `deepseek-flash`，DeepSeek 官方 `api.deepseek.com`）；**知识库构建不要占用它** |
+| `QQ_BOT_VL_MODEL` | 视觉模型（当前也是 `deepseek-flash`，与文本同 Key/端点，支持图片输入） |
 | `QQ_BOT_VL_DESCRIBE` | 当前 `1`（两阶段）：DS 带 6.6k 字人设单阶段看图会认错颜色，必须让视觉先做客观描述 |
 | `QQ_BOT_CHAT_MAX_TOKENS` | 当前 `4096`；DS 是推理模型，512 在复杂图/长思考时可能被 reasoning 吃光；人格聊天统一开 `high` |
 | `QQ_BOT_TEXT_REASONING_EFFORT` | 保留配置（`low/high/max`）；当前人格聊天在代码里固定 `high`，此变量主要给其他文本调用 |
@@ -116,6 +116,7 @@
 | `QQ_BOT_BILI*` | B 站解析：`BILI=1`、`MAX_MB=40`、`INTERVAL=10`、`MIN_FRAMES=9`、`MAX_FRAMES=24` |
 | `QQ_BOT_MEME*` | 梗库：`MEME=1`、`SEARCH=1`、`AUTO=1`、`CONF=0.55`、`DB=data/meme.db` |
 | `QQ_BOT_USAGE` | 用量账本开关（默认 1）；`/用量 [天数]` 查看 |
+| `QQ_BOT_TEXT_COST_INPUT/OUTPUT/CACHE` | 直连 DeepSeek 时没有 `list_cost`，按这三个单价（美元/1M token）估算日报费用；默认按峰时 0.30/1.20/0.006 |
 | `QQ_BOT_USAGE_REPORT_TOP_CNY` | 日报按群花费显示门槛（默认 `0.5` 元）；只列超过门槛的群，并尽量显示群名（`data/group_names.json` 缓存） |
 | `QQ_BOT_R6_KEY` / `QQ_BOT_R6_KEY_EXPIRE` | Arenyze key 与到期日（到期前管理员会被私聊提醒） |
 | `QQ_BOT_R6_TIMEOUT` | R6 接口超时秒数（默认 25） |
