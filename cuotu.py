@@ -29,7 +29,7 @@ ASSET_DIR = os.path.join(BASE_DIR, "assets")
 MEME_DIR = os.path.join(ASSET_DIR, "memes")
 FONT_DIR = os.path.join(ASSET_DIR, "fonts")
 
-# 气泡区域有限；超过这个长度即使缩到最小字号也会糊成一团
+# 气泡区域有限；默认超过这个长度即使缩到最小字号也会糊成一团
 MAX_TEXT = 24
 PAD = 8
 MIN_FONTSIZE = 10
@@ -62,21 +62,38 @@ class AssetsMissing(CuotuError):
     """模板图或字体缺失。"""
 
 
-# 每个模板：目录名 + 图片/文字区域。坐标来自原模板（图片原始尺寸不同）。
+# 每个模板：目录名 + 图片/文字区域/文字颜色。坐标来自原模板（图片原始尺寸不同）。
 _TEMPLATES: dict[str, dict] = {
     "mutsumi": {
-        "label": "睦子米",
+        "label": "睦子米说",
         "aliases": (
-            "睦子米", "若叶睦", "睦头人", "小黄瓜", "睦",
+            "睦子米说", "若叶睦说", "睦子米", "若叶睦", "睦头人", "小黄瓜", "睦",
             "mutsumi", "mygo_wakaba_mutsumi_say",
         ),
         "dir": "mygo_wakaba_mutsumi_say",
         "images": (
-            ("1.png", (31, 89, 166, 175)),
-            ("2.png", (40, 48, 192, 139)),
-            ("3.png", (24, 33, 180, 140)),
-            ("4.png", (27, 47, 172, 141)),
+            ("1.png", (31, 89, 166, 175), (0, 0, 0)),
+            ("2.png", (40, 48, 192, 139), (0, 0, 0)),
+            ("3.png", (24, 33, 180, 140), (0, 0, 0)),
+            ("4.png", (27, 47, 172, 141), (0, 0, 0)),
         ),
+    },
+    "deepseek": {
+        "label": "大肥鱼说",
+        "aliases": (
+            "大肥鱼说", "大肥鱼", "DeepSeek说", "deepseek说", "鲸鱼娘说",
+            "鲸鱼娘", "deepseek", "deepseek_say",
+        ),
+        "dir": "deepseek_say",
+        "images": (
+            ("1.png", (59, 57, 569, 336), (4, 21, 70)),
+            ("2.png", (139, 140, 653, 427), (16, 49, 94)),
+            ("3.png", (372, 0, 1254, 382), (0, 0, 0)),
+            ("4.png", (139, 122, 664, 427), (0, 10, 53)),
+        ),
+        # 底图更大，气泡也更大；可以比睦子米多放一点字
+        "max_fontsize": 160,
+        "max_text": 40,
     },
 }
 
@@ -152,12 +169,13 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont,
 
 
 def _fit(draw: ImageDraw.ImageDraw, text: str, area: tuple[int, int, int, int],
-         font_path: str):
+         font_path: str, max_fontsize: int = MAX_FONTSIZE,
+         pad: int = PAD):
     """从大到小找能塞进气泡的字号；返回 (font, lines, bboxes, heights, gap)。"""
     x1, y1, x2, y2 = area
-    max_width = max(1, x2 - x1 - PAD * 2)
-    max_height = max(1, y2 - y1 - PAD * 2)
-    top = min(MAX_FONTSIZE, max_height)
+    max_width = max(1, x2 - x1 - pad * 2)
+    max_height = max(1, y2 - y1 - pad * 2)
+    top = min(max_fontsize, max_height)
     for size in range(top, MIN_FONTSIZE - 1, -1):
         font = ImageFont.truetype(font_path, size)
         lines = _wrap(draw, text, font, max_width)
@@ -172,12 +190,16 @@ def _fit(draw: ImageDraw.ImageDraw, text: str, area: tuple[int, int, int, int],
     raise TextTooLong(text)
 
 
-def _draw_text(im: Image.Image, area: tuple[int, int, int, int], text: str) -> None:
+def _draw_text(im: Image.Image, area: tuple[int, int, int, int], text: str,
+               color: tuple[int, int, int] = (0, 0, 0),
+               max_fontsize: int = MAX_FONTSIZE, pad: int = PAD) -> None:
     font_path = _font_path()
     if not font_path:
         raise AssetsMissing("没有可用字体")
     draw = ImageDraw.Draw(im)
-    font, lines, boxes, heights, gap = _fit(draw, text, area, font_path)
+    font, lines, boxes, heights, gap = _fit(
+        draw, text, area, font_path, max_fontsize=max_fontsize, pad=pad
+    )
     x1, y1, x2, y2 = area
     cx = (x1 + x2) / 2.0
     cy = (y1 + y2) / 2.0
@@ -189,7 +211,7 @@ def _draw_text(im: Image.Image, area: tuple[int, int, int, int], text: str) -> N
             (cx - width / 2.0 - box[0], y - box[1]),
             line,
             font=font,
-            fill=(0, 0, 0),
+            fill=color,
         )
         y += height + gap
 
@@ -202,10 +224,12 @@ def render(name: str, text: str, number: int = 0) -> bytes:
     body = (text or "").strip()
     if not body:
         raise TextTooLong("空文字")
-    if len(body) > MAX_TEXT:
-        raise TextTooLong(body)
 
     template = _TEMPLATES[key]
+    limit = template.get("max_text", MAX_TEXT)
+    if len(body) > limit:
+        raise TextTooLong(body)
+
     images = template["images"]
     if number:
         if not 1 <= number <= len(images):
@@ -214,13 +238,20 @@ def render(name: str, text: str, number: int = 0) -> bytes:
     else:
         index = random.randrange(len(images))
 
-    filename, area = images[index]
+    filename, area, color = images[index]
     path = os.path.join(MEME_DIR, template["dir"], filename)
     if not os.path.isfile(path):
         raise AssetsMissing(path)
 
     im = _load_template_image(path).copy()
-    _draw_text(im, area, body)
+    _draw_text(
+        im,
+        area,
+        body,
+        color=color,
+        max_fontsize=template.get("max_fontsize", MAX_FONTSIZE),
+        pad=template.get("pad", PAD),
+    )
     buf = io.BytesIO()
     im.save(buf, format="JPEG", quality=90, optimize=True)
     return buf.getvalue()
@@ -230,14 +261,23 @@ def template_count() -> int:
     return len(_TEMPLATES)
 
 
+def max_text(name: str) -> int:
+    """该表情建议的最大字数；不认识的表情返回默认值。"""
+    key = normalize_name(name)
+    if not key:
+        return MAX_TEXT
+    return int(_TEMPLATES[key].get("max_text", MAX_TEXT))
+
+
 def list_text() -> str:
     lines = ["当前支持的表情："]
     for tpl in _TEMPLATES.values():
-        aliases = [a for a in tpl["aliases"][:4] if a != tpl["label"]]
+        aliases = [a for a in tpl["aliases"][:5] if a != tpl["label"]]
         suffix = f"（别名：{' / '.join(aliases)}）" if aliases else ""
         lines.append(f"　{tpl['label']}{suffix}　{len(tpl['images'])} 张底图")
     lines.append("")
-    lines.append("用法：/搓图 睦子米 今天也不想上班")
+    lines.append("用法：/搓图 睦子米说 今天也不想上班")
+    lines.append("　　　/搓图 大肥鱼说 正在思考中……")
     return "\n".join(lines)
 
 
@@ -248,9 +288,9 @@ def help_text() -> str:
         "　第一个空格前是表情名，后面全部算文字；\n"
         "　同一表情有多张底图时随机选一张。\n"
         "\n"
-        "例：/搓图 睦子米 今天也不想上班\n"
-        "　　/搓图 睦子米 我从没觉得玩乐队开心过\n"
+        "例：/搓图 睦子米说 今天也不想上班\n"
+        "　　/搓图 大肥鱼说 正在思考中……\n"
         "\n"
         "看表情：/搓图 列表\n"
-        f"限制：文字最多 {MAX_TEXT} 字，气泡塞不下会自动缩小/换行。"
+        "限制：文字最多 24~40 字（按表情），气泡塞不下会自动缩小/换行。"
     )

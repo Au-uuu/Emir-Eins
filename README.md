@@ -222,17 +222,18 @@
 
 - 用法：`/搓图 表情名 要加的字`
   - 第一个空格前是表情名，后面全部算文字（文字里可以有空格）
-  - 例：`/搓图 睦子米 今天也不想上班`
+  - 例：`/搓图 睦子米说 今天也不想上班`
   - 同一表情有多张底图时随机选一张
-- 当前表情：**睦子米**（若叶睦 / 睦头人 / 小黄瓜 / mutsumi），4 张底图
+- 当前表情：
+  - **睦子米说**（睦子米 / 若叶睦 / 睦头人 / 小黄瓜 / mutsumi），4 张底图
+  - **大肥鱼说**（大肥鱼 / DeepSeek说 / 鲸鱼娘说），4 张底图
 - 看列表：`/搓图 列表`
-- 文字上限 24 字，气泡塞不下会自动缩小/换行
+- 文字上限 24~40 字（按表情），气泡塞不下会自动缩小/换行
 - 本地 Pillow 渲染，不调用模型、不联网；同一人 3 秒冷却（`QQ_BOT_CUOTU_COOLDOWN`）
 
-素材位于 `assets/memes/mygo_wakaba_mutsumi_say/`，来自 MIT 项目
-[`anyliew/meme_emoji`](https://github.com/anyliew/meme_emoji) 的
-`mygo_wakaba_mutsumi_say` 模板；字体为 `assets/fonts/NotoSansSC-Bold.ttf`
-（SIL Open Font License）。
+素材位于 `assets/memes/`：`mygo_wakaba_mutsumi_say/` 与 `deepseek_say/`，
+来自 MIT 项目 [`anyliew/meme_emoji`](https://github.com/anyliew/meme_emoji)；
+字体为 `assets/fonts/NotoSansSC-Bold.ttf`（SIL Open Font License）。
 
 ## 游戏公告推送（明日方舟 / 终末地）
 

@@ -57,17 +57,31 @@ async def main() -> int:
     check("表情名", name == "睦子米", name)
     check("文字保留空格", body == "今天 不想 上班", body)
     check("空参数", cuotu.split_args("") == ("", ""))
-    for alias in ("睦子米", "若叶睦", "睦头人", "小黄瓜", "mutsumi", "MuTsUmI"):
-        check(f"别名 {alias}", cuotu.normalize_name(alias) == "mutsumi")
+    for alias in (
+        "睦子米说", "睦子米", "若叶睦", "睦头人", "小黄瓜", "mutsumi", "MuTsUmI",
+        "大肥鱼说", "大肥鱼", "DeepSeek说", "deepseek说", "鲸鱼娘说",
+    ):
+        expected = "deepseek" if ("肥鱼" in alias or "deepseek" in alias.casefold() or "鲸鱼" in alias) else "mutsumi"
+        check(f"别名 {alias}", cuotu.normalize_name(alias) == expected)
     check("未知表情", cuotu.normalize_name("不存在") is None)
+    check("睦子米字数上限", cuotu.max_text("睦子米说") == 24)
+    check("大肥鱼字数上限", cuotu.max_text("大肥鱼说") == 40)
 
     print("[2] 四张底图都能出图")
     sizes = {1: (512, 512), 2: (384, 384), 3: (500, 500), 4: (500, 500)}
     for number, size in sizes.items():
-        data = cuotu.render("睦子米", "测试文字", number=number)
+        data = cuotu.render("睦子米说", "测试文字", number=number)
         im = Image.open(io.BytesIO(data))
         check(f"第 {number} 张", im.format == "JPEG" and im.size == size, im.size)
         check(f"第 {number} 张非空", len(data) > 1000, len(data))
+
+    print("[2b] 大肥鱼说四张底图")
+    for number in range(1, 5):
+        data = cuotu.render("大肥鱼说", "正在思考中……", number=number)
+        im = Image.open(io.BytesIO(data))
+        check(f"大肥鱼第 {number} 张",
+              im.format == "JPEG" and im.size == (1254, 1254), im.size)
+        check(f"大肥鱼第 {number} 张非空", len(data) > 1000, len(data))
 
     print("[3] 错误输入")
     try:
@@ -80,7 +94,8 @@ async def main() -> int:
         check("未知模板拒绝", False)
     except cuotu.UnknownTemplate:
         check("未知模板拒绝", True)
-    check("列表含睦子米", "睦子米" in cuotu.list_text())
+    check("列表含睦子米", "睦子米说" in cuotu.list_text())
+    check("列表含大肥鱼", "大肥鱼说" in cuotu.list_text())
 
     print("[4] 指令接线")
     captured = {}
@@ -92,10 +107,14 @@ async def main() -> int:
 
     bot._reply_image_bytes = fake_send
 
-    msg = FakeMessage("/搓图 睦子米 测试")
+    msg = FakeMessage("/搓图 睦子米说 测试")
     await bot.do_cuotu(msg, None, "group", "G1", msg.content)
     check("出图", bool(captured.get("data")), captured.get("filename"))
     check("出图不发文字", not msg.replies, msg.replies)
+
+    msg = FakeMessage("/搓图 大肥鱼说 测试")
+    await bot.do_cuotu(msg, None, "group", "G1", msg.content)
+    check("大肥鱼出图", bool(captured.get("data")), captured.get("filename"))
 
     msg = FakeMessage("/搓图 不存在 测试")
     await bot.do_cuotu(msg, None, "group", "G1", msg.content)
