@@ -32,6 +32,7 @@ import arkdata_update
 import arkenemy
 import arklore
 import bili
+import cuotu
 import fortune
 import group_context
 import help_image
@@ -81,6 +82,9 @@ GROUP_REPLY_COOLDOWN = float(os.getenv("QQ_BOT_COOLDOWN", "10"))
 
 # 取图指令的每群限流，防止有人连点把接口打爆
 IMAGE_COOLDOWN = float(os.getenv("QQ_BOT_IMAGE_COOLDOWN", "3"))
+
+# 搓图限流：同一会话同一人两次出图的最小间隔（秒）
+CUOTU_COOLDOWN = max(0.0, float(os.getenv("QQ_BOT_CUOTU_COOLDOWN", "3") or 0))
 
 # 人格聊天：同一会话的最小回复间隔（秒），防止连点烧 token；0 = 不限流
 CHAT_COOLDOWN = float(os.getenv("QQ_BOT_CHAT_COOLDOWN", "5") or 0)
@@ -274,6 +278,7 @@ class Cooldown:
 
 dedup = DedupCache()
 cooldown = Cooldown(GROUP_REPLY_COOLDOWN)
+cuotu_cooldown = Cooldown(CUOTU_COOLDOWN)
 
 # 被动回复 msg_seq 计数：QQ 按「msg_id + msg_seq」去重，而 SDK 的 reply() 永远发
 # seq=1 且不自增——同一条消息回第二条必被 40054005 整条拒掉（/图库 预览的
@@ -418,6 +423,7 @@ HELP_TEXT = (
     "　　　/黑话 [词]　查本群黑话　/黑话 添加 词 解释（管理员）\n"
     "　　　/印象　看本机对你的印象\n"
     "【梗库】/梗 查 词　联网查梗并记下；/梗　看最近收录　更多用法：/help 梗\n"
+    "【搓图】/搓图 表情名 要加的字　例：/搓图 睦子米 今天也不想上班　/搓图 列表\n"
     "【接话】/接话 [5%|0.03|关|默认]　调整本群随机接话概率\n"
     "\n"
     "【收藏】/添加 关键词…　引用一张图片后回复；也可以先发图，再发「添加 关键词」（10 分钟内）\n"
@@ -535,6 +541,20 @@ HELP_TOPICS = {
         "聊天里问「X 是什么梗」时，本机会先查梗库；没有就联网搜，并把结果\n"
         "在后台整理成词条。后台学黑话时也会挑把握较大的词去联网核实。"
     ),
+    "搓图": (
+        "【搓图 · 完整用法】\n"
+        "\n"
+        "出图：/搓图 表情名 要加的字\n"
+        "　第一个空格前是表情名，后面全部算文字（文字里可以有空格）。\n"
+        "　同一表情有多张底图时随机选一张。\n"
+        "\n"
+        "例：/搓图 睦子米 今天也不想上班\n"
+        "　　/搓图 睦子米 我从没觉得玩乐队开心过\n"
+        "\n"
+        "看表情：/搓图 列表\n"
+        "别名：睦子米 = 若叶睦 / 睦头人 / 小黄瓜 / mutsumi\n"
+        "限制：文字最多 24 字，气泡塞不下会自动缩小/换行。"
+    ),
     "名片": (
         "【游戏名片 · 完整用法】\n"
         "\n"
@@ -558,6 +578,8 @@ HELP_TOPIC_ALIASES = {
     "游戏名片": "名片",
     "梗库": "梗",
     "查梗": "梗",
+    "表情包": "搓图",
+    "做图": "搓图",
 }
 
 
@@ -600,6 +622,8 @@ WHOAMI_RE = re.compile(r"^/查询标识\b\s*(.*)$", re.DOTALL)
 CALL_ME_RE = re.compile(r"^/叫我\s+(.{1,16})$", re.DOTALL)
 SLANG_RE = re.compile(r"^/黑话(?:\s+(.*))?$", re.DOTALL)
 MEME_RE = re.compile(r"^/梗(?:\s+(.*))?$", re.DOTALL)
+# 搓图：/搓图 表情名 要加的字（必须带斜杠；文字里可以有空格）
+CUOTU_RE = re.compile(r"^/搓图(?:\s+(.*))?$", re.DOTALL)
 IMPRESSION_RE = re.compile(r"^/印象(?:\s+(.*))?$", re.DOTALL)
 USAGE_RE = re.compile(r"^/用量(?:\s+(\d{1,3}))?$", re.DOTALL)
 
@@ -3493,6 +3517,61 @@ async def do_slang(message, scope: str, text: str) -> None:
     await message.reply(content=f"{arg}：{row['meaning']}（{tag}）")
 
 
+async def do_cuotu(message, api, scope: str, scene_id: str, text: str) -> None:
+    """/搓图：把一句话画进角色表情的空白气泡。"""
+    match = CUOTU_RE.match(text)
+    arg = ((match.group(1) if match else "") or "").strip()
+    if not arg:
+        await message.reply(content=cuotu.help_text())
+        return
+
+    name, body = cuotu.split_args(arg)
+    if not body:
+        if name.casefold() in ("列表", "list", "帮助", "help", "?"):
+            await message.reply(content=cuotu.list_text())
+        elif cuotu.normalize_name(name):
+            await message.reply(
+                content=(
+                    f"用法：/搓图 {name} <要加的字>\n"
+                    f"例：/搓图 {name} 今天也不想上班"
+                )
+            )
+        else:
+            await message.reply(
+                content=f"没有「{name}」这个表情。\n{cuotu.list_text()}"
+            )
+        return
+
+    key = f"{scope}:{scene_id}:{author_openid(message)}"
+    if not cuotu_cooldown.allow(key):
+        await message.reply(
+            content=f"搓图冷却中，{CUOTU_COOLDOWN:.0f} 秒后再试。"
+        )
+        return
+
+    try:
+        image = await asyncio.to_thread(cuotu.render, name, body)
+    except cuotu.UnknownTemplate:
+        await message.reply(content=f"没有「{name}」这个表情。\n{cuotu.list_text()}")
+        return
+    except cuotu.TextTooLong:
+        await message.reply(
+            content=f"字太多了：这个气泡最多 {cuotu.MAX_TEXT} 字，缩短一点。"
+        )
+        return
+    except cuotu.AssetsMissing as exc:
+        log.error("[搓图] 素材缺失：%s", exc)
+        await message.reply(content="搓图素材没装好，先找管理员。")
+        return
+    except Exception as exc:  # noqa: BLE001
+        log.exception("[搓图] 渲染失败：%s", exc)
+        await message.reply(content="搓图失败了，换个短一点的文字试试。")
+        return
+
+    log.info("[搓图] %s %d 字：%s", name, len(body), body[:30])
+    await _reply_image_bytes(message, api, scope, scene_id, image, "cuotu.jpg")
+
+
 async def do_meme(message, scope: str, text: str) -> None:
     """/梗：查梗、看梗库、管理员手写/删除/强制联网重查。"""
     match = MEME_RE.match(text)
@@ -3741,6 +3820,10 @@ async def handle_command(message, api, scope: str, scene_id: str, content: str) 
 
     if SLANG_RE.match(text):
         await do_slang(message, store_scope, text)
+        return True
+
+    if CUOTU_RE.match(text):
+        await do_cuotu(message, api, scope, scene_id, text)
         return True
 
     if MEME_RE.match(text):

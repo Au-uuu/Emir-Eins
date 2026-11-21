@@ -4,12 +4,13 @@
 
 .DESCRIPTION
     DEPLOY.md 讲的是「第一次把机器人部署到服务器」；本脚本解决之后每次改完代码
-    怎么更新上去。它做四件事：
+    怎么更新上去。它做五件事：
 
       1. 把仓库里所有 *.py（含 _test_*.py）经 scp 送到服务器 /tmp/
-      2. 服务器上先把旧文件备份到 /root/<名>.bak-<时间戳>，再覆盖安装
-      3. **逐个比对 SHA256**，确认线上就是本地这一份（不一致就报错退出）
-      4. 重启服务、打印启动日志；并在服务器上跑全部测试套件
+      2. 把 assets/（搓图模板、字体等）打成 tar 包送到服务器并安装
+      3. 服务器上先把旧文件备份到 /root/<名>.bak-<时间戳>，再覆盖安装
+      4. **逐个比对 SHA256**，确认线上就是本地这一份（不一致就报错退出）
+      5. 重启服务、打印启动日志；并在服务器上跑全部测试套件
 
     为什么要经 /tmp 中转而不是直接覆盖：安装需要 root，而登录用的是 ubuntu 用户。
     先 scp 到 ubuntu 可写的 /tmp，再用 sudo 拷进安装目录。
@@ -78,6 +79,10 @@ foreach ($exe in @($ssh, $scp)) {
 }
 if (-not (Test-Path $KeyFile)) { throw "找不到私钥：$KeyFile" }
 
+# Windows 10 1809+ 自带 tar.exe，用来打包 assets/ 一次上传
+$tarExe = (Get-Command tar.exe -ErrorAction SilentlyContinue).Source
+if (-not $tarExe) { throw "找不到 tar.exe（Windows 10 1809+ 自带）" }
+
 # 仓库根 = 本脚本所在目录（deploy/）的上一级
 $root = Split-Path -Parent $PSScriptRoot
 $files = Get-ChildItem -Path $root -Filter '*.py' -File |
@@ -91,13 +96,25 @@ $personaFiles = if (Test-Path $personaDir) {
 }
 else { @() }
 
+# 静态素材（搓图模板/字体等）：递归收集，保留相对路径
+$assetDir = Join-Path $root 'assets'
+$assetFiles = if (Test-Path $assetDir) {
+    Get-ChildItem -Path $assetDir -Recurse -File |
+        ForEach-Object { $_.FullName.Substring($root.Length + 1).Replace('\', '/') } |
+        Sort-Object
+}
+else { @() }
+
 $opts = @('-i', $KeyFile, '-o', 'BatchMode=yes', '-o', "UserKnownHostsFile=$KnownHosts")
 
 Write-Host "仓库根目录 : $root"
 Write-Host "目标服务器 : $Server ($AppDir)"
-Write-Host "待上传文件 : $($files.Count) 个 .py + $($personaFiles.Count) 个 persona 素材"
+Write-Host "待上传文件 : $($files.Count) 个 .py + $($personaFiles.Count) 个 persona 素材 + $($assetFiles.Count) 个 assets 素材"
 $files | ForEach-Object { Write-Host "             $_" }
 $personaFiles | ForEach-Object { Write-Host "             persona/$_" }
+if ($assetFiles.Count) {
+    Write-Host "             assets/（$($assetFiles.Count) 个文件，打包上传）"
+}
 
 if ($DryRun) {
     Write-Host ''
@@ -113,6 +130,9 @@ foreach ($f in $files) {
 foreach ($f in $personaFiles) {
     $localHashes["persona/$f"] = (Get-FileHash (Join-Path $personaDir $f) -Algorithm SHA256).Hash.ToLower()
 }
+foreach ($f in $assetFiles) {
+    $localHashes[$f] = (Get-FileHash (Join-Path $root ($f -replace '/', '\')) -Algorithm SHA256).Hash.ToLower()
+}
 
 # ---------- 2) 上传到 /tmp ----------
 Write-Host ''
@@ -123,6 +143,17 @@ if ($personaFiles.Count) {
 }
 & $scp @opts @paths "${Server}:/tmp/"
 if ($LASTEXITCODE -ne 0) { throw "scp 失败（exit $LASTEXITCODE）" }
+
+# assets 走 tar，避免几十个嵌套文件逐个 scp；服务器端解包后覆盖安装
+$assetTar = $null
+if ($assetFiles.Count) {
+    $assetTar = Join-Path $env:TEMP "qqbot-assets-$PID.tgz"
+    & $tarExe -czf $assetTar -C $root assets
+    if ($LASTEXITCODE -ne 0) { throw "打包 assets 失败（exit $LASTEXITCODE）" }
+    & $scp @opts $assetTar "${Server}:/tmp/qqbot-assets.tgz"
+    if ($LASTEXITCODE -ne 0) { throw "上传 assets 失败（exit $LASTEXITCODE）" }
+    Remove-Item $assetTar -Force -ErrorAction SilentlyContinue
+}
 
 # ---------- 3) 生成并执行远程脚本 ----------
 Write-Host '[2/4] 服务器端备份并安装 ...' -ForegroundColor Cyan
@@ -144,6 +175,7 @@ $restartCmd = if ($NoRestart) {
 $hashTargets = @()
 foreach ($f in $files) { $hashTargets += , @($f, "`$APP/$f") }
 foreach ($f in $personaFiles) { $hashTargets += , @("persona/$f", "`$APP/persona/$f") }
+foreach ($f in $assetFiles) { $hashTargets += , @($f, "`$APP/$f") }
 
 $hashCheck = ($hashTargets | ForEach-Object {
         "echo -n `"  $($_[0]) `"; sudo -n sha256sum $($_[1]) | cut -c1-12"
@@ -178,8 +210,21 @@ if [ -n "__PERSONA__" ]; then
   sudo -n chmod 644 "$APP/persona"/*
 fi
 
+if [ -f /tmp/qqbot-assets.tgz ]; then
+  echo "--- 安装 assets 素材 ---"
+  rm -rf /tmp/qqbot-assets
+  mkdir -p /tmp/qqbot-assets
+  tar -xzf /tmp/qqbot-assets.tgz -C /tmp/qqbot-assets
+  sudo -n mkdir -p "$APP/assets"
+  sudo -n cp -a /tmp/qqbot-assets/assets/. "$APP/assets/"
+  sudo -n find "$APP/assets" -type f -exec chmod 644 {} +
+  rm -rf /tmp/qqbot-assets /tmp/qqbot-assets.tgz
+  echo "assets 安装完成"
+fi
+
 echo "--- 线上文件哈希 ---"
 __HASHCHECK__
+__ASSETHASH__
 
 echo "--- 服务器上跑测试套件 ---"
 cd $APP
@@ -192,6 +237,7 @@ $remote = $remote.Replace('__APPDIR__', $AppDir).
     Replace('__FILES__', ($files -join ' ')).
     Replace('__PERSONA__', ($personaFiles -join ' ')).
     Replace('__HASHCHECK__', $hashCheck).
+    Replace('__ASSETHASH__', '').
     Replace('__TESTS__', $testCmd).
     Replace('__RESTART__', $restartCmd)
 

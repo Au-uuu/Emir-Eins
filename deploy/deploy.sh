@@ -73,6 +73,11 @@ if [[ -d persona ]]; then
     mkdir -p "$APP_DIR/persona"
     cp -f persona/* "$APP_DIR/persona/" 2>/dev/null || true
 fi
+# 表情/字体等静态素材（搓图等）
+if [[ -d assets ]]; then
+    mkdir -p "$APP_DIR/assets"
+    cp -a assets/. "$APP_DIR/assets/"
+fi
 
 # .env 是凭据与运维参数，服务器上的值（如 IDLE_TIMEOUT）可能与本地不同，
 # 只在缺失时初始化，不覆盖

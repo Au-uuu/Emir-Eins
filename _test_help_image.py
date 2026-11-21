@@ -109,6 +109,7 @@ async def main() -> int:
 
     class SendMsg:
         def __init__(self):
+            self.id = "m-cache-1"
             self.replies: list = []
 
         async def reply(self, **kwargs):
@@ -134,6 +135,7 @@ async def main() -> int:
 
     class FlakyMsg:
         def __init__(self):
+            self.id = "m-flaky-1"
             self.n = 0
 
         async def reply(self, **kwargs):

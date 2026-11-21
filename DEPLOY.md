@@ -165,7 +165,7 @@ cd C:\DSH\qqbot
 powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\upload.ps1
 ```
 
-它会：上传所有 `*.py` 与 `persona/` → 在服务器上备份旧文件 → 覆盖安装 →
+它会：上传所有 `*.py`、`persona/` 与 `assets/` → 在服务器上备份旧文件 → 覆盖安装 →
 **逐个比对 SHA256**（确认线上就是本地这一份）→ 跑全部测试套件 → 重启 → 打印启动日志。
 
 手改单个文件时也可以直接 scp（然后重启）：

@@ -26,14 +26,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\upload.ps1
 > 之后就能直接 `.\deploy\upload.ps1` 了。（仓库里的 `start.ps1` / `run_forever.ps1`
 > 同理。）
 
-脚本会依次做四件事：
+脚本会依次做五件事：
 
 | 步骤 | 内容 |
 |---|---|
 | 1 | 把仓库里**所有 `*.py`**（含 `_test_*.py`、`smoke_test.py`）+ **`persona/*`** 经 `scp` 传到服务器 `/tmp/` |
-| 2 | 服务器上先把旧文件备份到 `/root/<名>.bak-<时间戳>`，再覆盖安装到 `/opt/qqbot`，并补 `chmod 644` |
-| 3 | **逐个比对 SHA256**（本地 vs 线上），不一致就报错退出 |
-| 4 | 在服务器上跑全部测试套件，然后 `systemctl restart qqbot`，打印状态与启动日志 |
+| 2 | 把 **`assets/`**（搓图模板、字体）打成 tar 包上传，服务器解包覆盖到 `/opt/qqbot/assets` |
+| 3 | 服务器上先把旧文件备份到 `/root/<名>.bak-<时间戳>`，再覆盖安装到 `/opt/qqbot`，并补 `chmod 644` |
+| 4 | **逐个比对 SHA256**（本地 vs 线上，含 assets），不一致就报错退出 |
+| 5 | 在服务器上跑全部测试套件，然后 `systemctl restart qqbot`，打印状态与启动日志 |
 
 为什么经 `/tmp` 中转：安装需要 root，而登录用的是 `ubuntu`；先传到 ubuntu 可写的
 `/tmp`，再用 `sudo` 拷进安装目录。
@@ -142,7 +143,7 @@ scp @opts .\bot.py .\persona.py ubuntu@124.223.62.16:/tmp/
 
 2. **`.env` 不会被覆盖**
    服务器上的 `.env` 有自己的运维参数（`IDLE_TIMEOUT`、公告关键词等），可能和本地
-   不一样。脚本**只装 `.py` 与 `persona/`**，绝不碰 `/opt/qqbot/.env`。
+   不一样。脚本**只装 `.py`、`persona/` 与 `assets/`**，绝不碰 `/opt/qqbot/.env`。
    要改配置就 ssh 上去 `sudo vi /opt/qqbot/.env` 然后重启。
 
 3. **`data/` 不会被覆盖**
