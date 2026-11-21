@@ -75,13 +75,17 @@ async def main() -> int:
         check(f"第 {number} 张", im.format == "JPEG" and im.size == size, im.size)
         check(f"第 {number} 张非空", len(data) > 1000, len(data))
 
-    print("[2b] 大肥鱼说四张底图")
-    for number in range(1, 5):
-        data = cuotu.render("大肥鱼说", "正在思考中……", number=number)
-        im = Image.open(io.BytesIO(data))
-        check(f"大肥鱼第 {number} 张",
-              im.format == "JPEG" and im.size == (1254, 1254), im.size)
-        check(f"大肥鱼第 {number} 张非空", len(data) > 1000, len(data))
+    print("[2b] 大肥鱼说（带已思考条）")
+    data = cuotu.render("大肥鱼说", "臭婊子。", number=1)
+    im = Image.open(io.BytesIO(data))
+    check("大肥鱼出图",
+          im.format == "JPEG" and im.size == (1280, 1216), im.size)
+    check("大肥鱼非空", len(data) > 1000, len(data))
+    try:
+        cuotu.render("大肥鱼说", "测试", number=2)
+        check("大肥鱼只有一张底图", False)
+    except cuotu.UnknownTemplate:
+        check("大肥鱼只有一张底图", True)
 
     print("[3] 错误输入")
     try:

@@ -84,16 +84,18 @@ _TEMPLATES: dict[str, dict] = {
             "大肥鱼说", "大肥鱼", "DeepSeek说", "deepseek说", "鲸鱼娘说",
             "鲸鱼娘", "deepseek", "deepseek_say",
         ),
-        "dir": "deepseek_say",
+        "dir": "deepseek_think",
         "images": (
-            ("1.png", (59, 57, 569, 336), (4, 21, 70)),
-            ("2.png", (139, 140, 653, 427), (16, 49, 94)),
-            ("3.png", (372, 0, 1254, 382), (0, 0, 0)),
-            ("4.png", (139, 122, 664, 427), (0, 10, 53)),
+            ("1.png", (80, 175, 720, 480), (0, 0, 0)),
         ),
-        # 底图更大，气泡也更大；可以比睦子米多放一点字
-        "max_fontsize": 160,
+        # 气泡上方有灰色「已思考（用时X秒）>」；正文左对齐
+        "thinking": True,
+        "header": "已思考（用时{seconds}秒）>",
+        "header_color": (150, 150, 150),
+        "header_fontsize": 36,
+        "max_fontsize": 72,
         "max_text": 40,
+        "pad": 18,
     },
 }
 
@@ -216,6 +218,53 @@ def _draw_text(im: Image.Image, area: tuple[int, int, int, int], text: str,
         y += height + gap
 
 
+def _draw_thinking(im: Image.Image, area: tuple[int, int, int, int], text: str,
+                   color: tuple[int, int, int], template: dict) -> None:
+    """大肥鱼说：上方灰色「已思考（用时X秒）>」，下方正文左对齐。"""
+    font_path = _font_path()
+    if not font_path:
+        raise AssetsMissing("没有可用字体")
+    draw = ImageDraw.Draw(im)
+    x1, y1, x2, y2 = area
+    pad = int(template.get("pad", PAD))
+    max_width = max(1, x2 - x1 - pad * 2)
+
+    header = str(template.get("header", "已思考（用时{seconds}秒）>")).format(
+        seconds=random.randint(3, 30)
+    )
+    header_color = tuple(template.get("header_color", (150, 150, 150)))
+    header_size = int(template.get("header_fontsize", 36))
+    while header_size > 12:
+        header_font = ImageFont.truetype(font_path, header_size)
+        if draw.textlength(header, font=header_font) <= max_width:
+            break
+        header_size -= 1
+    else:
+        header_font = ImageFont.truetype(font_path, 12)
+
+    header_box = draw.textbbox((0, 0), header, font=header_font)
+    header_height = header_box[3] - header_box[1]
+    gap = max(8, round(header_size * 0.9))
+    body_top = y1 + pad + header_height + gap
+    body_area = (x1 + pad, body_top, x2 - pad, y2 - pad)
+    font, lines, boxes, heights, line_gap = _fit(
+        draw, text, body_area, font_path,
+        max_fontsize=template.get("max_fontsize", MAX_FONTSIZE), pad=0,
+    )
+
+    draw.text(
+        (x1 + pad - header_box[0], y1 + pad - header_box[1]),
+        header, font=header_font, fill=header_color,
+    )
+    y = body_top
+    for line, box, height in zip(lines, boxes, heights):
+        draw.text(
+            (x1 + pad - box[0], y - box[1]),
+            line, font=font, fill=color,
+        )
+        y += height + line_gap
+
+
 def render(name: str, text: str, number: int = 0) -> bytes:
     """生成图片字节。number=0 随机，1 起为指定底图（测试用）。"""
     key = normalize_name(name)
@@ -244,14 +293,17 @@ def render(name: str, text: str, number: int = 0) -> bytes:
         raise AssetsMissing(path)
 
     im = _load_template_image(path).copy()
-    _draw_text(
-        im,
-        area,
-        body,
-        color=color,
-        max_fontsize=template.get("max_fontsize", MAX_FONTSIZE),
-        pad=template.get("pad", PAD),
-    )
+    if template.get("thinking"):
+        _draw_thinking(im, area, body, color, template)
+    else:
+        _draw_text(
+            im,
+            area,
+            body,
+            color=color,
+            max_fontsize=template.get("max_fontsize", MAX_FONTSIZE),
+            pad=template.get("pad", PAD),
+        )
     buf = io.BytesIO()
     im.save(buf, format="JPEG", quality=90, optimize=True)
     return buf.getvalue()
@@ -292,5 +344,6 @@ def help_text() -> str:
         "　　/搓图 大肥鱼说 正在思考中……\n"
         "\n"
         "看表情：/搓图 列表\n"
+        "大肥鱼说会自动加灰色「已思考（用时X秒）>」，秒数随机。\n"
         "限制：文字最多 24~40 字（按表情），气泡塞不下会自动缩小/换行。"
     )

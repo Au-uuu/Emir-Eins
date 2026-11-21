@@ -226,14 +226,16 @@
   - 同一表情有多张底图时随机选一张
 - 当前表情：
   - **睦子米**（睦子米说 / 若叶睦 / 睦头人 / 小黄瓜 / mutsumi），4 张底图
-  - **大肥鱼说**（大肥鱼 / DeepSeek说 / 鲸鱼娘说），4 张底图
+  - **大肥鱼说**（大肥鱼 / DeepSeek说 / 鲸鱼娘说），1 张底图，自动加灰色
+    `已思考（用时X秒）>`，正文在下面
 - 看列表：`/搓图 列表`
 - 文字上限 24~40 字（按表情），气泡塞不下会自动缩小/换行
 - 本地 Pillow 渲染，不调用模型、不联网；同一人 3 秒冷却（`QQ_BOT_CUOTU_COOLDOWN`）
 
-素材位于 `assets/memes/`：`mygo_wakaba_mutsumi_say/` 与 `deepseek_say/`，
-来自 MIT 项目 [`anyliew/meme_emoji`](https://github.com/anyliew/meme_emoji)；
-字体为 `assets/fonts/NotoSansSC-Bold.ttf`（SIL Open Font License）。
+素材位于 `assets/memes/`：`mygo_wakaba_mutsumi_say/` 与 `deepseek_think/`，
+来自 MIT 项目 [`anyliew/meme_emoji`](https://github.com/anyliew/meme_emoji) 和
+梗鲸档案馆 #280 的空白底图；字体为 `assets/fonts/NotoSansSC-Bold.ttf`
+（SIL Open Font License）。
 
 ## 游戏公告推送（明日方舟 / 终末地）
 
