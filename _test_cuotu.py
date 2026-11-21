@@ -94,7 +94,7 @@ async def main() -> int:
         check("未知模板拒绝", False)
     except cuotu.UnknownTemplate:
         check("未知模板拒绝", True)
-    check("列表含睦子米", "睦子米说" in cuotu.list_text())
+    check("列表含睦子米", "睦子米（" in cuotu.list_text())
     check("列表含大肥鱼", "大肥鱼说" in cuotu.list_text())
 
     print("[4] 指令接线")
@@ -107,10 +107,14 @@ async def main() -> int:
 
     bot._reply_image_bytes = fake_send
 
-    msg = FakeMessage("/搓图 睦子米说 测试")
+    msg = FakeMessage("/搓图 睦子米 测试")
     await bot.do_cuotu(msg, None, "group", "G1", msg.content)
     check("出图", bool(captured.get("data")), captured.get("filename"))
     check("出图不发文字", not msg.replies, msg.replies)
+
+    msg = FakeMessage("/搓图 睦子米说 测试")
+    await bot.do_cuotu(msg, None, "group", "G1", msg.content)
+    check("睦子米说别名出图", bool(captured.get("data")), captured.get("filename"))
 
     msg = FakeMessage("/搓图 大肥鱼说 测试")
     await bot.do_cuotu(msg, None, "group", "G1", msg.content)

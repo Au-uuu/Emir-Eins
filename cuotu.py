@@ -65,9 +65,9 @@ class AssetsMissing(CuotuError):
 # 每个模板：目录名 + 图片/文字区域/文字颜色。坐标来自原模板（图片原始尺寸不同）。
 _TEMPLATES: dict[str, dict] = {
     "mutsumi": {
-        "label": "睦子米说",
+        "label": "睦子米",
         "aliases": (
-            "睦子米说", "若叶睦说", "睦子米", "若叶睦", "睦头人", "小黄瓜", "睦",
+            "睦子米", "睦子米说", "若叶睦说", "若叶睦", "睦头人", "小黄瓜", "睦",
             "mutsumi", "mygo_wakaba_mutsumi_say",
         ),
         "dir": "mygo_wakaba_mutsumi_say",
@@ -276,7 +276,7 @@ def list_text() -> str:
         suffix = f"（别名：{' / '.join(aliases)}）" if aliases else ""
         lines.append(f"　{tpl['label']}{suffix}　{len(tpl['images'])} 张底图")
     lines.append("")
-    lines.append("用法：/搓图 睦子米说 今天也不想上班")
+    lines.append("用法：/搓图 睦子米 今天也不想上班")
     lines.append("　　　/搓图 大肥鱼说 正在思考中……")
     return "\n".join(lines)
 
@@ -288,7 +288,7 @@ def help_text() -> str:
         "　第一个空格前是表情名，后面全部算文字；\n"
         "　同一表情有多张底图时随机选一张。\n"
         "\n"
-        "例：/搓图 睦子米说 今天也不想上班\n"
+        "例：/搓图 睦子米 今天也不想上班\n"
         "　　/搓图 大肥鱼说 正在思考中……\n"
         "\n"
         "看表情：/搓图 列表\n"
