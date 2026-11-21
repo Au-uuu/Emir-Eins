@@ -21,6 +21,7 @@ os.environ["QQ_BOT_CHAT_DELAY_MAX"] = "0"
 os.environ["QQ_BOT_CHAT_SPLIT"] = "0"
 os.environ["QQ_BOT_RANDOM_REPLY"] = "1"       # 测试里固定 100%
 os.environ["QQ_BOT_RANDOM_REPLY_COOLDOWN"] = "0"
+os.environ["QQ_BOT_RANDOM_REPLY_MIN_MESSAGES"] = "1"
 os.environ["QQ_BOT_TEXT_KEY"] = "test-key"    # 让 persona.available() 为真
 os.environ["QQ_BOT_WEBSEARCH"] = "0"
 os.environ["QQ_BOT_KB_DIR"] = os.path.join(tempfile.mkdtemp(), "kb")
@@ -61,7 +62,8 @@ async def main() -> int:
     check("斜杠指令不接", bot.should_random_reply("RG", "/图库") is False)
     check("纯确认词不接", bot.should_random_reply("RG", "ok") is False)
     check("语气词不接", bot.should_random_reply("RG", "嗷") is False)
-    check("资讯卡片不接", bot.should_random_reply("RG", "【新闻资讯】今日") is False)
+    check("引导卡片不接", bot.should_random_reply("RG", "【新闻资讯】今日") is False)
+    check("聊天记录不接", bot.should_random_reply("RG", "[群聊的聊天记录]", object()) is False)
     orig_quoted = bot.quoted_content
     bot.quoted_content = lambda m: "引用了别人"
     check("引用别人不接", bot.should_random_reply("RG", "你说呢", object()) is False)
@@ -80,6 +82,16 @@ async def main() -> int:
     bot.get_raw = lambda m: {"author": {"username": "human"}}
     check("人类消息不误杀", bot.author_is_bot(object(), "bot") is False)
     bot.get_raw = orig_raw
+    print("[1b] 回复欲望：先积累再掷骰子")
+    os.environ["QQ_BOT_RANDOM_REPLY_MIN_MESSAGES"] = "3"
+    bot.random_reply._DESIRE.clear()
+    check("第 1 条不接", bot.should_random_reply("RD", "第一句") is False)
+    check("第 2 条不接", bot.should_random_reply("RD", "第二句") is False)
+    check("第 3 条才接", bot.should_random_reply("RD", "第三句") is True)
+    check("接完欲望清零", bot.random_reply.desire_score("RD") == 0)
+    os.environ["QQ_BOT_RANDOM_REPLY_MIN_MESSAGES"] = "1"
+    bot.random_reply._DESIRE.clear()
+
     print("[2] 每群冷却")
     orig_cd = bot.random_reply_cooldown
     bot.random_reply_cooldown = bot.Cooldown(999)

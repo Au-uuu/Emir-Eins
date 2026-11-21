@@ -265,8 +265,8 @@ class Cooldown:
 
     def allow(self, key: str) -> bool:
         now = time.monotonic()
-        last = self._last.get(key, 0.0)
-        if now - last < self.seconds:
+        last = self._last.get(key)
+        if last is not None and now - last < self.seconds:
             return False
         self._last[key] = now
         return True
@@ -2745,6 +2745,11 @@ def should_random_reply(
     text = (content or "").strip()
     if not text or text.startswith("/"):
         return False
+    # 聊天记录/合并转发是旧内容，不当作当前话题随机接；@ 时仍正常处理。
+    raw = get_raw(message) if message is not None else {}
+    if (isinstance(raw, dict) and raw.get("message_type") == 102) or "聊天记录" in text:
+        random_reply.reset_desire(group_openid)
+        return False
     # ???/??????????????????
     if _LOW_INFO_RE.match(text) or text.startswith("【"):
         return False
@@ -2753,11 +2758,22 @@ def should_random_reply(
         return False
     if not persona.available():
         return False
-    if random.random() >= p:
+    # 回复欲望：至少积累几条连续可接的话，才进入掷骰子阶段；
+    # 欲望越高，单条消息的实际回复概率略微上升。
+    score = random_reply.note_message(group_openid)
+    chance = random_reply.desire_chance(group_openid, p)
+    if chance <= 0:
+        log.debug(
+            "[随机接话] 欲望不足 score=%d/%d: %s",
+            score, random_reply.desire_min_messages(), group_openid[:10],
+        )
+        return False
+    if random.random() >= chance:
         return False
     if not random_reply_cooldown.allow(group_openid):
         log.debug("[随机接话] 群冷却中，跳过: %s", group_openid[:10])
         return False
+    random_reply.reset_desire(group_openid)
     return True
 
 

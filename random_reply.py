@@ -14,13 +14,20 @@
 from __future__ import annotations
 
 import logging
+import os
+import random
 import re
+import time
 
 log = logging.getLogger("qqbot.random_reply")
 
 SETTING_KEY = "random_reply_p"
 # 上限 50%：再高就是刷屏；冷却仍由 QQ_BOT_RANDOM_REPLY_COOLDOWN 控制
 MAX_P = 0.5
+
+# 回复欲望：按群记「最近连续有多少条可接的话」和最后一条时间。
+# 不满足最小上下文条数时完全不掷骰子，避免看到一条孤立消息/聊天记录就接。
+_DESIRE: dict[str, tuple[int, float]] = {}
 
 PATTERN = re.compile(r"^/(?:\u63a5\u8bdd|\u968f\u673a\u63a5\u8bdd)(?:\s+(.*))?$", re.DOTALL)
 
@@ -59,6 +66,55 @@ def _fmt(p: float) -> str:
     if pct == int(pct):
         return f"{int(pct)}%"
     return f"{pct:.1f}%"
+
+
+def _env_int(name: str, default: int, low: int, high: int) -> int:
+    try:
+        value = int(os.getenv(name, "") or default)
+    except ValueError:
+        value = default
+    return max(low, min(high, value))
+
+
+def desire_window() -> float:
+    try:
+        value = float(os.getenv("QQ_BOT_RANDOM_REPLY_WINDOW", "") or 180)
+    except ValueError:
+        value = 180.0
+    return max(30.0, min(600.0, value))
+
+
+def desire_min_messages() -> int:
+    return _env_int("QQ_BOT_RANDOM_REPLY_MIN_MESSAGES", 3, 1, 10)
+
+
+def note_message(group_openid: str, now: float | None = None) -> int:
+    """一条可接的话进来，欲望 +1；间隔太久则重新累计。"""
+    now = time.time() if now is None else now
+    score, last = _DESIRE.get(group_openid, (0, 0.0))
+    if now - last > desire_window():
+        score = 0
+    score = min(10, score + 1)
+    _DESIRE[group_openid] = (score, now)
+    return score
+
+
+def desire_chance(group_openid: str, base: float) -> float:
+    """欲望够了之后，概率随连续消息数略微上升，但不超过 50%。"""
+    score, _ = _DESIRE.get(group_openid, (0, 0.0))
+    need = desire_min_messages()
+    if score < need or base <= 0:
+        return 0.0
+    cap = min(1.0, max(MAX_P, base))
+    return min(cap, base * (1.0 + (score - need) * 0.5))
+
+
+def reset_desire(group_openid: str) -> None:
+    _DESIRE.pop(group_openid, None)
+
+
+def desire_score(group_openid: str) -> int:
+    return _DESIRE.get(group_openid, (0, 0.0))[0]
 
 
 async def load(memory) -> None:

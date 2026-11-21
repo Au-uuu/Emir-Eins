@@ -128,11 +128,11 @@ def enabled() -> bool:
 
 
 def proactive_window_minutes() -> float:
-    """随机接话只看最近多少分钟的群聊；默认 10 分钟，避免接旧话题。"""
+    """随机接话只看最近多少分钟的群聊；默认 5 分钟，避免接旧话题。"""
     try:
-        value = float(os.getenv("QQ_BOT_PROACTIVE_WINDOW_MINUTES", "10") or 10)
+        value = float(os.getenv("QQ_BOT_PROACTIVE_WINDOW_MINUTES", "5") or 5)
     except ValueError:
-        value = 10.0
+        value = 5.0
     return max(1.0, min(30.0, value))
 
 

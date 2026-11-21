@@ -100,8 +100,10 @@
 | `QQ_BOT_CHAT_SPLIT` | 长回复拆条开关（线上 `1`）；`SPLIT_CHARS` 默认 80，`SPLIT_MAX` 默认 2 |
 | `QQ_BOT_RANDOM_REPLY` | 群友随机接话概率（默认 `0` 完全关闭；建议 `0.02~0.05`），支持 `0.03`/`3%`/`3` |
 | `QQ_BOT_RANDOM_REPLY_COOLDOWN` | 同一群两次随机接话的最小间隔秒数（默认 300） |
+| `QQ_BOT_RANDOM_REPLY_MIN_MESSAGES` | 随机接话前至少积累几条可接消息（默认 3） |
+| `QQ_BOT_RANDOM_REPLY_WINDOW` | 欲望累计窗口秒数，超过则重新累计（默认 180） |
 | `QQ_BOT_GROUP_TOPICS` | 随机接话前用主模型总结当前群话题（缓存 60 秒）；默认 `1`，`0` 关闭 |
-| `QQ_BOT_PROACTIVE_WINDOW_MINUTES` | 随机接话只看最近多少分钟群聊（默认 10，1~30）；超时/旧话题不接 |
+| `QQ_BOT_PROACTIVE_WINDOW_MINUTES` | 随机接话只看最近多少分钟群聊（默认 5，1~30）；超时/旧话题不接 |
 | `QQ_BOT_CHAT_TIMEOUT` | 文本模型超时秒数（线上 `90`；随机接话开 `high` 需要留足时间） |
 | `QQ_BOT_MEMORY` | 黑话/印象/称呼总开关（默认 `1`） |
 | `QQ_BOT_MEMORY_LEARN_MINUTES` | 自动学习间隔分钟（线上 60；`0` 关闭） |

@@ -93,6 +93,7 @@
 | 2026-11-13 | 递归解析合并转发/聊天记录；线上试关打标器与 KB，带图消息不再查 KB；新增 `QQ_BOT_TAGGER`/`QQ_BOT_KB` 开关 | [chat-record-image-experiment](changes/2026-11-13-chat-record-image-experiment.md) |
 | 2026-11-14 | 确认图片消息不触发联网；收紧视觉描述提示词；改为 `【话题判断】` 软提示（不再强制新图独立），人格聊天统一 `high` 思考 | [vision-guard](changes/2026-11-14-vision-guard.md) |
 | 2026-11-14 | 文本/视觉从 OpenCode Go 切到 DeepSeek 官方 `deepseek-flash`：实测 high 2~2.7s（原 4.4~5.6s），识图 6.3s（原 12~16s）；补直连费用估算 | [deepseek-direct](changes/2026-11-14-deepseek-direct.md) |
+| 2026-11-21 | 随机接话改成「回复欲望」：先累计 3 条连续可接的话（180s 窗口）再掷骰子，聊天记录/引用不累计；时效窗口 10→5 分钟；修 `Cooldown` 启动初期误判 | [reply-desire](changes/2026-11-21-reply-desire.md) |
 
 ## 约定
 
