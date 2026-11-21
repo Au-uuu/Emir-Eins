@@ -2773,6 +2773,10 @@ def should_random_reply(
     if not random_reply_cooldown.allow(group_openid):
         log.debug("[随机接话] 群冷却中，跳过: %s", group_openid[:10])
         return False
+    log.info(
+        "[随机接话] 命中 group=%s 欲望=%d 实际概率=%.1f%%: %s",
+        group_openid[:10], score, chance * 100.0, text[:30],
+    )
     random_reply.reset_desire(group_openid)
     return True
 
@@ -4105,12 +4109,8 @@ class MyClient(botpy.Client):
             log.debug("[随机接话] 这条在 @ 别人，跳过")
         elif should_random_reply(message.group_openid, content, message):
             log.info(
-                "[随机接话] group=%s p=%.1f%%: %s",
+                "[随机接话] 回复中 group=%s: %s",
                 message.group_openid[:10],
-                random_reply.probability(
-                    message.group_openid, RANDOM_REPLY_P
-                )
-                * 100.0,
                 content[:30],
             )
             await persona_reply(
