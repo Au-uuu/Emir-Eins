@@ -555,7 +555,7 @@ HELP_TOPICS = {
         "别名：睦子米 = 睦子米说 / 若叶睦 / 睦头人 / 小黄瓜 / mutsumi\n"
         "　　　大肥鱼说 = 大肥鱼 / DeepSeek说 / 鲸鱼娘说\n"
         "大肥鱼说会自动加灰色「已思考（用时X秒）>」，秒数随机。\n"
-        "限制：文字最多 24~40 字（按表情），气泡塞不下会自动缩小/换行。"
+        "限制：建议 24~40 字；超长会自动缩小字号，缩到最小仍塞不下才拒绝。"
     ),
     "名片": (
         "【游戏名片 · 完整用法】\n"
@@ -3565,7 +3565,7 @@ async def do_cuotu(message, api, scope: str, scene_id: str, text: str) -> None:
         return
     except cuotu.TextTooLong:
         await message.reply(
-            content=f"字太多了：这个气泡最多 {cuotu.max_text(name)} 字，缩短一点。"
+            content="字太多了，缩到最小还是塞不下；再短一点。"
         )
         return
     except cuotu.AssetsMissing as exc:

@@ -64,8 +64,6 @@ async def main() -> int:
         expected = "deepseek" if ("肥鱼" in alias or "deepseek" in alias.casefold() or "鲸鱼" in alias) else "mutsumi"
         check(f"别名 {alias}", cuotu.normalize_name(alias) == expected)
     check("未知表情", cuotu.normalize_name("不存在") is None)
-    check("睦子米字数上限", cuotu.max_text("睦子米说") == 24)
-    check("大肥鱼字数上限", cuotu.max_text("大肥鱼说") == 40)
 
     print("[2] 四张底图都能出图")
     sizes = {1: (512, 512), 2: (384, 384), 3: (500, 500), 4: (500, 500)}
@@ -86,6 +84,13 @@ async def main() -> int:
         check("大肥鱼只有一张底图", False)
     except cuotu.UnknownTemplate:
         check("大肥鱼只有一张底图", True)
+
+    print("[2c] 超长文字自动缩字号")
+    long_text = "这是一段比较长的测试文字看看会不会超出气泡边界"
+    data = cuotu.render("大肥鱼说", long_text, number=1)
+    check("大肥鱼长文字不出错", len(data) > 1000, len(data))
+    data = cuotu.render("睦子米", long_text[:30], number=1)
+    check("睦子米长文字不出错", len(data) > 1000, len(data))
 
     print("[3] 错误输入")
     try:

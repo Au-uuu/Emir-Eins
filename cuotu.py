@@ -29,8 +29,8 @@ ASSET_DIR = os.path.join(BASE_DIR, "assets")
 MEME_DIR = os.path.join(ASSET_DIR, "memes")
 FONT_DIR = os.path.join(ASSET_DIR, "fonts")
 
-# 气泡区域有限；默认超过这个长度即使缩到最小字号也会糊成一团
-MAX_TEXT = 24
+# 气泡区域有限；超过这个绝对上限直接拒绝（正常长度会先自动缩字号）
+MAX_TEXT = 80
 PAD = 8
 MIN_FONTSIZE = 10
 MAX_FONTSIZE = 96
@@ -86,7 +86,7 @@ _TEMPLATES: dict[str, dict] = {
         ),
         "dir": "deepseek_think",
         "images": (
-            ("1.png", (80, 175, 720, 480), (0, 0, 0)),
+            ("1.png", (140, 180, 610, 410), (0, 0, 0)),
         ),
         # 气泡上方有灰色「已思考（用时X秒）>」；正文左对齐
         "thinking": True,
@@ -94,7 +94,6 @@ _TEMPLATES: dict[str, dict] = {
         "header_color": (150, 150, 150),
         "header_fontsize": 36,
         "max_fontsize": 72,
-        "max_text": 40,
         "pad": 18,
     },
 }
@@ -313,14 +312,6 @@ def template_count() -> int:
     return len(_TEMPLATES)
 
 
-def max_text(name: str) -> int:
-    """该表情建议的最大字数；不认识的表情返回默认值。"""
-    key = normalize_name(name)
-    if not key:
-        return MAX_TEXT
-    return int(_TEMPLATES[key].get("max_text", MAX_TEXT))
-
-
 def list_text() -> str:
     lines = ["当前支持的表情："]
     for tpl in _TEMPLATES.values():
@@ -345,5 +336,5 @@ def help_text() -> str:
         "\n"
         "看表情：/搓图 列表\n"
         "大肥鱼说会自动加灰色「已思考（用时X秒）>」，秒数随机。\n"
-        "限制：文字最多 24~40 字（按表情），气泡塞不下会自动缩小/换行。"
+        "限制：建议 24~40 字；超长会自动缩小字号，缩到最小仍塞不下才拒绝。"
     )
