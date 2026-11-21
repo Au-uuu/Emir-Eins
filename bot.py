@@ -3542,6 +3542,13 @@ async def do_cuotu(message, api, scope: str, scene_id: str, text: str) -> None:
             )
         return
 
+    # 和人格链路用同一份敏感词表；宁可不出图，也别把政治梗画出来
+    hit = sensitive.filter.hit(body)
+    if hit:
+        log.info("[搓图] 命中敏感词，已拒绝：%s", hit)
+        await message.reply(content="这句不适合做图，换一句吧。")
+        return
+
     key = f"{scope}:{scene_id}:{author_openid(message)}"
     if not cuotu_cooldown.allow(key):
         await message.reply(

@@ -113,6 +113,15 @@ async def main() -> int:
     await bot.do_cuotu(msg, None, "group", "G1", msg.content)
     check("超长提示", bool(msg.replies) and "字太多" in msg.replies[-1], msg.replies)
 
+    real_hit = bot.sensitive.filter.hit
+    bot.sensitive.filter.hit = lambda t: "测试敏感词" if "敏感词" in t else None
+    try:
+        msg = FakeMessage("/搓图 睦子米 敏感词")
+        await bot.do_cuotu(msg, None, "group", "G1", msg.content)
+        check("敏感词拒绝", bool(msg.replies) and "不适合" in msg.replies[-1], msg.replies)
+    finally:
+        bot.sensitive.filter.hit = real_hit
+
     check("指令正则", bool(bot.CUOTU_RE.match("/搓图 睦子米 你好")))
     check("帮助已接线", "搓图" in bot.HELP_TEXT and "搓图" in bot.HELP_TOPICS)
 
