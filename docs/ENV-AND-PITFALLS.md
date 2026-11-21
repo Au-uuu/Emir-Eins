@@ -124,7 +124,10 @@
 | `QQ_BOT_R6_KEY` / `QQ_BOT_R6_KEY_EXPIRE` | Arenyze key 与到期日（到期前管理员会被私聊提醒） |
 | `QQ_BOT_R6_TIMEOUT` | R6 接口超时秒数（默认 25） |
 | `QQ_BOT_NEWS_POLL_MINUTES` | 公告轮询间隔（`0` = 关闭主动推送） |
-| `QQ_BOT_NEWS_KEYWORDS` | 公告推送关键词（`\|` 分隔） |
+| `QQ_BOT_NEWS_BILI` | 明日方舟是否用 B 站动态（默认 `1`；`0` 回退官网公告） |
+| `QQ_BOT_NEWS_BILI_MID` | 明日方舟官方 B 站 UID（默认 `161775300`） |
+| `QQ_BOT_NEWS_BILI_KEYWORDS` | B 站动态可选关键词（`\|` 分隔；留空 = 全部推送） |
+| `QQ_BOT_NEWS_KEYWORDS` | 终末地/官网公告推送关键词（`\|` 分隔） |
 | `QQ_BOT_NEWS_DAILY_LIMIT` | 每群每日推送上限（防刷屏保险丝） |
 | `QQ_BOT_KB_DIR` / `QQ_BOT_KB_MIN_SCORE` / `QQ_BOT_KB_TOP` | 知识库目录 / 召回分数门槛 / 条数 |
 | `QQ_BOT_KB` | 本地知识库总开关（默认 `1`；线上实验 `0`）；`0` 时纯文本也不查 KB，人格 HELP self-manual 不受影响 |
@@ -470,7 +473,7 @@ $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($py))
 |---|---|
 | `QQ_BOT_R6_KEY_EXPIRE` | 已换新 key（2026-11-12），90 天有效期 → `2027-02-10`；API 额度重置日 `2026-12-01`，管理员会在到期前 7 天提醒 |
 | Arenyze 用量 | 定期跑 `/me/usage`，若长期吃紧：① 去掉常用干员改 1 call/查 ② 或上 PRO（€3.99/月，50,000 次） |
-| 公告关键词 | 若活动推送太吵/太少，改 `.env` 的 `QQ_BOT_NEWS_KEYWORDS` 后重启 |
+| 公告关键词 | 明日方舟动态太吵用 `QQ_BOT_NEWS_BILI_KEYWORDS`；终末地/官网用 `QQ_BOT_NEWS_KEYWORDS`，改完重启 |
 | 群主权限 | 开「机器人主动发言」可解除每月 4 条主动消息限制 |
 | OpenCode Go | 观察是否被判定非编码流量；异常时切回 Qwen/DeepSeek 官方 API（步骤见 `changes/2026-10-26-opencode-go.md`） |
 | 视频抽帧 | 若切 DS 后仍想理解视频，按调研文档 §4.3 加 `QQ_BOT_VL_VIDEO_MODE=frames` |

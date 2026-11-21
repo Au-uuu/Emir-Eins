@@ -1,10 +1,12 @@
 """
-明日方舟 / 明日方舟：终末地 官网公告的抓取、过滤与群推送。
+明日方舟 / 明日方舟：终末地 公告抓取、过滤与群推送。
 
-数据源（均为官网公开入口，无需鉴权，国内直连，不需要代理）：
-  - 明日方舟：GET https://ak.hypergryph.com/api/news?category=LATEST&page=N
-      JSON：data.list[] = {cid, tab, title, displayTime(秒级时间戳), brief, ...}
-      详情页 https://ak.hypergryph.com/news/{cid}
+数据源：
+  - 明日方舟：B 站官方账号图文动态（默认）
+      GET https://api.bilibili.com/x/polymer/web-dynamic/v1/opus/feed/space
+          ?host_mid=161775300&type=all
+      带 buvid3 + 浏览器头即可，覆盖活动公告和「123罗德岛」四格。
+      官网 JSON（ak.hypergryph.com/api/news）保留作 QQ_BOT_NEWS_BILI=0 时的回退。
   - 终末地：GET https://endfield.hypergryph.com/news
       没有公开 JSON API，但官网是 Next.js SSR：公告列表（bulletins 数组，
       字段与明日方舟基本一致，tab 为 "notices"/"events"/...）内嵌在 HTML 的
@@ -12,10 +14,11 @@
       鹰角改版导致解析失败时只影响终末地通道：记日志、下一轮重试，不影响明日方舟。
 
 推送规则：
-  - 只推「关键更新」：标题命中关键词（默认 更新|维护|停机|版本，env 可配）；
-    活动预告 / 寻访 / 制作组通讯等日常公告不主动打扰，可用 /公告 查 被动查看
-  - 一轮轮询里同一游戏有多条新公告 → 合并成一条消息推送
-  - **首轮轮询只把现有公告标记为已见、不推送**（避免部署当天把历史公告轰炸一遍）
+  - 明日方舟默认推 B 站全部新图文动态（活动、复刻、123罗德岛、周边等）；
+    配 QQ_BOT_NEWS_BILI_KEYWORDS 可只推命中关键词的动态
+  - 终末地仍只推「关键更新」：标题命中关键词（默认 更新|维护|停机|版本）
+  - 一轮轮询里同一游戏有多条新内容 → 合并成一条消息推送
+  - **首次轮询只把现有内容标记为已见、不推送**（避免部署当天把历史动态轰炸一遍）
   - 平台对**主动消息**（不带 msg_id）的硬限制（官方文档，2026-06 起）：
     每群每自然月 4 条；2026-06-22 起群主动推送全量开放，但前提是**群主在群里
     打开「机器人主动发言」开关**，开启后频控为机器人账号 30-60 条/分钟、
@@ -23,12 +26,15 @@
     22009（msg limit exceed）拒绝时日志会明确提示。被动回复（带 msg_id）不受
     此配额限制，/公告 查 不受影响
   - 每群每日推送上限（默认 6，env 可配）只是防解析 bug 刷屏的本地保险丝
-  - 发送失败记日志、不重试（下一轮有新公告自然再推，不堆积补偿）
+  - 发送失败记日志、不重试（下一轮有新内容自然再推，不堆积补偿）
 
 配置（惰性读取——bot.py 的 load_dotenv() 晚于 import，import 期读 env 只能读到空值）：
-  QQ_BOT_NEWS_POLL_MINUTES  轮询间隔分钟（默认 10；设 0 = 关闭主动推送，只保留手动查询）
-  QQ_BOT_NEWS_KEYWORDS      关键公告的标题关键词，| 分隔（默认 更新|维护|停机|版本）
-  QQ_BOT_NEWS_DAILY_LIMIT   每群每日主动推送上限（默认 6）
+  QQ_BOT_NEWS_POLL_MINUTES      轮询间隔分钟（默认 10；设 0 = 关闭主动推送）
+  QQ_BOT_NEWS_BILI              明日方舟是否用 B 站动态（默认 1；0 回退官网）
+  QQ_BOT_NEWS_BILI_MID          官方 B 站 UID（默认 161775300）
+  QQ_BOT_NEWS_BILI_KEYWORDS     B 站动态可选关键词，| 分隔；留空 = 全推
+  QQ_BOT_NEWS_KEYWORDS          终末地/官网关键公告关键词
+  QQ_BOT_NEWS_DAILY_LIMIT       每群每日主动推送上限（默认 6）
 """
 
 from __future__ import annotations
@@ -42,6 +48,8 @@ import time
 from dataclasses import dataclass
 
 import aiohttp
+
+import bili
 
 log = logging.getLogger("qqbot.news")
 
@@ -62,6 +70,10 @@ GAMES: dict[str, dict] = {
 DEFAULT_KEYWORDS = "更新|维护|停机|版本"
 DEFAULT_POLL_MINUTES = 10.0
 DEFAULT_DAILY_LIMIT = 6
+
+# 明日方舟官方 B 站账号。B 站动态作为默认推送源，官网 JSON 保留作手动查询/回退。
+BILI_AK_MID = "161775300"
+BILI_SEEN_KEY = "ak_bili"
 
 # 一次轮询最多拉几页列表（明日方舟每页 6 条；终末地一页全量）。两页足以覆盖
 # 任意轮询间隔内的全部新公告，再多只是浪费流量。
@@ -103,6 +115,24 @@ def _daily_limit() -> int:
         return DEFAULT_DAILY_LIMIT
 
 
+def _bili_enabled() -> bool:
+    return (os.getenv("QQ_BOT_NEWS_BILI", "1") or "1").strip().lower() not in (
+        "0", "false", "off", "no", "",
+    )
+
+
+def _bili_mid() -> str:
+    return (os.getenv("QQ_BOT_NEWS_BILI_MID", "") or BILI_AK_MID).strip()
+
+
+def _bili_keywords_pattern() -> re.Pattern | None:
+    """B 站动态的可选关键词过滤；留空 = 全部推送。"""
+    words = (os.getenv("QQ_BOT_NEWS_BILI_KEYWORDS", "") or "").strip()
+    if not words:
+        return None
+    return re.compile("|".join(re.escape(w) for w in words.split("|") if w))
+
+
 def resolve_game(word: str) -> str | None:
     """把指令参数解析成游戏 id；认不出返回 None。大小写不敏感。"""
     w = (word or "").strip().lower()
@@ -128,6 +158,8 @@ class NewsItem:
 
     @property
     def url(self) -> str:
+        if self.tab == "bili":
+            return f"https://www.bilibili.com/opus/{self.cid}"
         base = (
             "https://ak.hypergryph.com/news/"
             if self.game == "ak"
@@ -177,6 +209,51 @@ async def _fetch_ak(session: aiohttp.ClientSession) -> list[NewsItem]:
                 seen.add(item.cid)
                 items.append(item)
     return items
+
+
+def _bili_items(payload: dict) -> list[NewsItem]:
+    """B 站 opus/feed/space 响应 -> NewsItem；脏数据丢弃。"""
+    data = (payload or {}).get("data") or {}
+    rows = data.get("items") or []
+    items: list[NewsItem] = []
+    seen: set[str] = set()
+    for raw in rows:
+        if not isinstance(raw, dict):
+            continue
+        oid = str(raw.get("opus_id") or "").strip()
+        content = str(raw.get("content") or "").strip()
+        if not oid or not content or oid in seen:
+            continue
+        seen.add(oid)
+        items.append(NewsItem("ak", oid, content, 0, "bili", content))
+    return items
+
+
+async def fetch_bili_opus() -> list[NewsItem]:
+    """
+    明日方舟官方 B 站图文动态。
+
+    用 `opus/feed/space`（只取图文）而不是 `feed/space`：
+    - 后者未登录经常 412，需要 WBI/dm_img 风控参数；
+    - 前者带 buvid3 + 浏览器头即可，正好覆盖公告和 123罗德岛四格。
+    """
+    mid = _bili_mid()
+    url = (
+        "https://api.bilibili.com/x/polymer/web-dynamic/v1/opus/feed/space"
+        f"?host_mid={mid}&type=all&web_location=333.1387"
+    )
+    payload = await asyncio.to_thread(bili._get_json, url)
+    code = payload.get("code")
+    if code != 0:
+        raise RuntimeError(f"B站动态接口返回 {code}: {payload.get('message')}")
+    return _bili_items(payload)
+
+
+async def fetch_for_push(session: aiohttp.ClientSession, game: str) -> list[NewsItem]:
+    """主动推送的数据源：明日方舟默认 B 站动态，终末地仍走官网。"""
+    if game == "ak" and _bili_enabled():
+        return await fetch_bili_opus()
+    return await fetch_game(session, game)
 
 
 def extract_endfield_bulletins(html: str) -> list[dict]:
@@ -268,6 +345,14 @@ def is_update_news(title: str, pattern: re.Pattern | None = None) -> bool:
     return bool((pattern or _keywords_pattern()).search(title or ""))
 
 
+def is_bili_push(content: str) -> bool:
+    """B 站动态过滤：默认全推；配了 QQ_BOT_NEWS_BILI_KEYWORDS 才按关键词筛。"""
+    pattern = _bili_keywords_pattern()
+    if pattern is None:
+        return True
+    return bool(pattern.search(content or ""))
+
+
 def _fmt_time(ts: int) -> str:
     if ts <= 0:
         return "时间未知"
@@ -275,7 +360,20 @@ def _fmt_time(ts: int) -> str:
 
 
 def format_push_text(game: str, items: list[NewsItem]) -> str:
-    """主动推送的正文：同轮多条合并为一条。"""
+    """主动推送的正文：B 站动态用官方动态格式；官网公告合并为一条。"""
+    if items and all(it.tab == "bili" for it in items):
+        blocks = []
+        for it in items:
+            body = re.sub(r"\n{4,}", "\n\n\n", it.title.strip())
+            if len(body) > 800:
+                body = body[:800].rstrip() + "…"
+            blocks.append(
+                f"{body}\n\n"
+                f"图文地址：\n{it.url}\n\n"
+                f"查看完整动态：\nhttps://t.bilibili.com/{it.cid}"
+            )
+        return f"【{GAMES[game]['name']}官方动态】\n" + "\n\n——\n\n".join(blocks)
+
     lines = [f"【{GAMES[game]['name']}】更新公告"]
     for it in items:
         lines.append(f"· {it.title}")
@@ -288,6 +386,12 @@ def format_latest_text(game: str, items: list[NewsItem], limit: int = LATEST_LIM
     """被动查询 /公告 查 的正文：不过滤类型，直接列最新几条。"""
     if not items:
         return f"【{GAMES[game]['name']}】暂时没拉到公告，稍后再试。"
+    if all(it.tab == "bili" for it in items):
+        lines = [f"【{GAMES[game]['name']}】最新动态"]
+        for it in items[:limit]:
+            lines.append(f"· {it.title[:80]}")
+            lines.append(f"  {it.url}")
+        return "\n".join(lines)
     lines = [f"【{GAMES[game]['name']}】最新公告"]
     for it in items[:limit]:
         lines.append(f"· {it.title}")
@@ -297,8 +401,11 @@ def format_latest_text(game: str, items: list[NewsItem], limit: int = LATEST_LIM
 
 async def latest_text(game: str, limit: int = LATEST_LIMIT) -> str:
     """被动查询入口：现拉一次并格式化。网络失败抛异常（调用方回复错误文案）。"""
-    async with aiohttp.ClientSession(timeout=_TIMEOUT, headers=_HEADERS) as session:
-        items = await fetch_game(session, game)
+    if game == "ak" and _bili_enabled():
+        items = await fetch_bili_opus()
+    else:
+        async with aiohttp.ClientSession(timeout=_TIMEOUT, headers=_HEADERS) as session:
+            items = await fetch_game(session, game)
     return format_latest_text(game, items, limit)
 
 
@@ -322,8 +429,9 @@ async def poll_loop(api, pstore) -> None:
         return
 
     log.info(
-        "[公告] 轮询已启动：间隔 %.0f 分钟，关键词=%s",
+        "[公告] 轮询已启动：间隔 %.0f 分钟，明日方舟=%s，终末地=官网，官网关键词=%s",
         minutes,
+        "B站动态" if _bili_enabled() else "官网",
         _keywords_pattern().pattern,
     )
     async with aiohttp.ClientSession(timeout=_TIMEOUT, headers=_HEADERS) as session:
@@ -347,42 +455,54 @@ async def poll_loop(api, pstore) -> None:
 
 
 async def poll_once(session: aiohttp.ClientSession, api, pstore) -> None:
-    """拉全部游戏 → 找出新公告 → 关键更新推给开启的群。"""
+    """拉全部游戏 → 找出新内容 → 明日方舟推 B 站动态，终末地推关键公告。"""
     for game in GAMES:
+        source_bili = game == "ak" and _bili_enabled()
+        seen_key = BILI_SEEN_KEY if source_bili else game
         try:
-            items = await fetch_game(session, game)
+            items = await fetch_for_push(session, game)
         except Exception as exc:  # noqa: BLE001
             log.warning("[公告] 拉取%s失败（下一轮重试）：%s", GAMES[game]["name"], exc)
             continue
 
         cids = [it.cid for it in items]
-        unseen = await pstore.filter_unseen(game, cids)
+        unseen = await pstore.filter_unseen(seen_key, cids)
         if not unseen:
             continue
 
-        # 「首次初始化」只看该游戏**是否已有任何已见记录**，不看是不是本进程第一轮。
+        # 「首次初始化」只看该来源**是否已有任何已见记录**，不看是不是本进程第一轮。
         # 必须在 mark_seen 之前查（mark 完表就不空了）。
         # 老实现用进程级 first_round，导致每次重启后的第一轮会把重启期间出现的新公告
         # 静默标记为已见、永不推送——而部署代码就要重启，必然踩到。
-        first_time = not await pstore.has_seen(game)
+        first_time = not await pstore.has_seen(seen_key)
 
         unseen_set = set(unseen)
         fresh = [it for it in items if it.cid in unseen_set]
-        await pstore.mark_seen(game, unseen)
+        await pstore.mark_seen(seen_key, unseen)
 
         if first_time:
             log.info(
-                "[公告] %s 首次初始化：标记 %d 条既有公告为已见，不推送",
+                "[公告] %s 首次初始化：标记 %d 条既有内容为已见，不推送",
                 GAMES[game]["name"],
                 len(unseen),
             )
             continue
 
-        hits = [it for it in fresh if is_update_news(it.title)]
+        if source_bili:
+            hits = [it for it in fresh if is_bili_push(it.title)]
+        else:
+            hits = [it for it in fresh if is_update_news(it.title)]
         if not hits:
             continue
         now = time.time()
         for it in hits:
+            if it.tab == "bili":
+                log.info(
+                    "[公告] 新动态 %s：%s",
+                    GAMES[game]["name"],
+                    it.title.splitlines()[0][:60] if it.title else it.cid,
+                )
+                continue
             delay_min = max(0.0, (now - it.ts) / 60.0)
             log.info(
                 "[公告] 新公告 %s（发布 %s，延迟 %.0f 分钟）：%s",

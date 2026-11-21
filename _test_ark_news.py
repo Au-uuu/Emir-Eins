@@ -115,6 +115,47 @@ def test_endfield_extraction():
 # ---------------------------------------------------------------------------
 # 2. 过滤与别名
 # ---------------------------------------------------------------------------
+def test_bili_parse_format():
+    print("[1b] B站动态解析与格式")
+    payload = {
+        "code": 0,
+        "data": {
+            "items": [
+                {
+                    "opus_id": "1273100464188030994",
+                    "content": "SideStory「雪山降临1101」复刻即将于11月22日04:00开启！",
+                    "cover": {"url": "http://i0.hdslb.com/x.jpg", "width": 1920, "height": 1080},
+                },
+                {
+                    "opus_id": "1272992231006928896",
+                    "content": "#123罗德岛！？##明日方舟#\n明日方舟官方四格漫画《123罗德岛！？》\n——「乌有」篇",
+                },
+                {"opus_id": "", "content": "脏数据"},
+            ]
+        },
+    }
+    items = ark_news._bili_items(payload)
+    check("提取 2 条", len(items) == 2, str(len(items)))
+    check("opus id", items[0].cid == "1273100464188030994", items[0].cid)
+    check("tab=bili", items[0].tab == "bili")
+    check("图文地址", items[0].url == "https://www.bilibili.com/opus/1273100464188030994")
+    check("内容保留", "SideStory" in items[0].title)
+
+    text = ark_news.format_push_text("ak", items[:1])
+    check("官方动态标题", text.startswith("【明日方舟官方动态】"), text[:30])
+    check("带图文地址", "https://www.bilibili.com/opus/1273100464188030994" in text)
+    check("带完整动态", "https://t.bilibili.com/1273100464188030994" in text)
+    check("正文不重复两遍", text.count("雪山降临1101") == 1, str(text.count("雪山降临1101")))
+
+    os.environ["QQ_BOT_NEWS_BILI_KEYWORDS"] = "123罗德岛|SideStory"
+    try:
+        check("关键词命中 SideStory", ark_news.is_bili_push(items[0].title))
+        check("关键词命中 123", ark_news.is_bili_push(items[1].title))
+        check("关键词不命中", not ark_news.is_bili_push("普通转发"))
+    finally:
+        os.environ.pop("QQ_BOT_NEWS_BILI_KEYWORDS", None)
+
+
 def test_filter_and_aliases():
     print("[2] 关键词过滤与游戏别名")
     # 关键词来自环境变量（每次调用都读，无缓存）。**显式钉死**成默认值，
@@ -186,6 +227,8 @@ def fake_fetch_factory(items_by_game: dict):
 
 def test_poll_once():
     print("[4] 轮询推送")
+    # 这一段测官网 ak 路径；B 站动态在 [4b] 单独测
+    os.environ["QQ_BOT_NEWS_BILI"] = "0"
     # 同样钉死关键词，避免跟着 .env 变
     os.environ["QQ_BOT_NEWS_KEYWORDS"] = "更新|维护|停机|版本"
     db = os.path.join(TEST_DIR, "poll.db")
@@ -257,11 +300,68 @@ def test_poll_once():
         str(len(api5.sent)),
     )
     os.environ.pop("QQ_BOT_NEWS_KEYWORDS", None)
+    os.environ.pop("QQ_BOT_NEWS_BILI", None)
 
 
 # ---------------------------------------------------------------------------
 # 4.5 平台主动消息配额错误：单群被拒不影响其他群
 # ---------------------------------------------------------------------------
+def test_poll_bili():
+    print("[4b] B站动态轮询")
+    os.environ["QQ_BOT_NEWS_BILI"] = "1"
+    os.environ.pop("QQ_BOT_NEWS_BILI_KEYWORDS", None)
+    db = os.path.join(TEST_DIR, "bili.db")
+    os.makedirs(TEST_DIR, exist_ok=True)
+    if os.path.exists(db):
+        os.remove(db)
+    ps = PushStore(db_path=db)
+    asyncio.run(ps.set_enabled("G1", "ak", True))
+    ark_news._daily_pushed.clear()
+
+    old = ark_news.NewsItem("ak", "100", "旧动态", 0, "bili", "旧动态")
+    new = ark_news.NewsItem(
+        "ak",
+        "101",
+        "SideStory「雪山降临1101」复刻即将于11月22日04:00开启！",
+        0,
+        "bili",
+        "SideStory「雪山降临1101」复刻即将于11月22日04:00开启！",
+    )
+    current = {"ak": [old], "endfield": []}
+
+    async def fake_fetch(session, game):
+        return current[game]
+
+    original = ark_news.fetch_for_push
+    ark_news.fetch_for_push = fake_fetch
+    try:
+        api = FakeAPI()
+        asyncio.run(ark_news.poll_once(None, api, ps))
+        check("B站首轮初始化不推送", api.sent == [])
+        check(
+            "B站已见记录用独立命名空间",
+            asyncio.run(ps.filter_unseen("ak_bili", ["100"])) == [],
+        )
+
+        current["ak"] = [new, old]
+        api = FakeAPI()
+        asyncio.run(ark_news.poll_once(None, api, ps))
+        check("B站新动态推送 1 条", len(api.sent) == 1, str(len(api.sent)))
+        if api.sent:
+            body = api.sent[0]["content"]
+            check("B站推送标题", "【明日方舟官方动态】" in body, body[:40])
+            check("B站推送图文地址", "https://www.bilibili.com/opus/101" in body)
+            check("B站推送完整动态", "https://t.bilibili.com/101" in body)
+            check("B站推送群正确", api.sent[0]["group_openid"] == "G1")
+
+        api2 = FakeAPI()
+        asyncio.run(ark_news.poll_once(None, api2, ps))
+        check("B站已见不重推", api2.sent == [])
+    finally:
+        ark_news.fetch_for_push = original
+        os.environ.pop("QQ_BOT_NEWS_BILI", None)
+
+
 def test_push_quota_error():
     print("[4.5] 平台 22009 配额错误的容错")
     db = os.path.join(TEST_DIR, "quota.db")
@@ -401,9 +501,11 @@ def test_poll_loop_disabled():
 def main() -> int:
     try:
         test_endfield_extraction()
+        test_bili_parse_format()
         test_filter_and_aliases()
         test_push_store()
         test_poll_once()
+        test_poll_bili()
         test_push_quota_error()
         test_announce_command()
         test_poll_loop_disabled()
