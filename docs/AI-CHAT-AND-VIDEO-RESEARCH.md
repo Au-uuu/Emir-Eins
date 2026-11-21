@@ -308,4 +308,4 @@ QQ_BOT_VIDEO_TIMEOUT=60
 - OpenCode Go 文档：https://opencode.ai/docs/go
 - dsh-vision（视频抽帧）：https://github.com/tmok11/dsh-vision
 - dsh-vision（视觉桥接）：https://github.com/oil-oil/dsh-vision
-- MaaEnd 日志中心：`C:\DSH\maaend-log`（本机）+ `http://124.223.62.16/m/view/<TOKEN>`
+- MaaEnd 日志中心：`C:\DSH\maaend-log`（本机）+ `http://124.223.62.16/MAALOG/<TOKEN>`
